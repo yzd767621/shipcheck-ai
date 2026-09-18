@@ -36,6 +36,21 @@ The engine never sees the answer key. The results above come from general rules 
 | **Ask for help** | `NEEDS_REVIEW` with a reason and evidence: `unreadable` (corrupt or image-only file; **Claude vision** pre-reads the scan so the reviewer only has to confirm), `wrong_doc_type` (e.g. a Commercial Invoice in the BL slot, detected from the document header rather than the file name), `missing_attachment`, and `missing_value` (N/A, TBA, `____ MT`). The reviewer's correction recalculates the report, and the full history is stored. Processing failures show up as `ERROR` with a **Retry** button. |
 | **Act** | "Draft reply to sender" writes the amendment request email (Claude, with a template fallback). |
 
+### The operations console
+
+| Feature | Why it helps the team |
+|---|---|
+| **Inbox + pipeline stepper** | Each email shows *Received → Classified → Extracted → Compared → Result*, so it's clear where and why a case stopped. |
+| **Click-to-evidence** | Click a field in the SI vs BL table (or press `1`–`7`) to highlight the exact source lines in both documents. Staff can trust the flag without re-reading the whole document. |
+| **Review queue** | Only the cases that need a person. Values the system already read are pre-filled, including Claude's reading of scanned pages. `Ctrl+Enter` confirms and opens the next case. |
+| **Insights dashboard** | Estimated staff hours saved (with stated assumptions), automation rate, draft-BL error rate, discrepancies by field, review reasons, confidence spread, and **sender hotspots** (which counterparties send the most faulty drafts, and on which field). |
+| **Printable discrepancy report** | A one-page SI vs BL report per email (`/report/{id}`) that can be printed or saved as PDF and attached to the amendment request. |
+| **CSV export** | Every flagged field across the inbox, ready for Excel or a TMS import. |
+| **Reply drafting** | An amendment request or confirmation email, drafted by Claude (with a template fallback). |
+| **Activity log** | An audit trail of batch runs, uploads, retries and every human decision, including notes. |
+| **Command palette** | `Ctrl+K` searches emails, senders and fields, and runs commands. `J`/`K` move through the list; `?` lists all shortcuts. |
+| **Light / dark / system theme** | Responsive layout for laptop and tablet. |
+
 "Please send the draft BL for checking" emails are part of the BL-check workflow, but no documents have arrived yet. They are tracked as **Awaiting documents** and are *not* escalated. This keeps the review queue down to cases that really need a person.
 
 ---
@@ -76,9 +91,9 @@ shipcheck/
   pipeline.py    orchestration, escalation rules, human-review recalculation, submission export
   store.py       SQLite result store + audit log
 app.py           FastAPI app (REST API + web console)
-web/index.html   single-page console (no build step)
+web/index.html   single-page operations console (no build step): inbox, review queue, insights, activity
 scripts/run_batch.py   CLI: process the inbox, write results + submission.json, optionally submit for scoring
-tests/           41 robustness tests on synthetic messy inputs
+tests/           41 robustness tests on synthetic messy inputs + 5 API tests
 data/            the participant dataset bundle (inbox/, attachments/, loader.py)
 ```
 
@@ -100,7 +115,7 @@ Batch mode and self-evaluation:
 python scripts/run_batch.py                 # writes out/results.json and out/submission.json
 python scripts/run_batch.py --no-llm        # rules only
 python scripts/run_batch.py --source http://localhost:8080 --submit   # against the organisers' inbox server
-python -m pytest -q                         # tests (pip install pytest)
+pip install -r requirements-dev.txt && python -m pytest -q   # 46 tests
 ```
 
 | Env var | Default | Purpose |
@@ -113,7 +128,9 @@ python -m pytest -q                         # tests (pip install pytest)
 
 ### REST API
 
-`GET /api/emails` · `GET /api/emails/{id}` · `POST /api/emails/{id}/review` · `POST /api/emails/{id}/retry` · `POST /api/emails/{id}/draft-reply` · `POST /api/upload` (new email + attachments) · `POST /api/run` · `GET /api/stats` · `GET /api/audit` · `GET /api/submission` · `POST /api/submit` · `GET /api/health`
+`GET /api/emails` · `GET /api/emails/{id}` · `POST /api/emails/{id}/review` · `POST /api/emails/{id}/retry` · `POST /api/emails/{id}/draft-reply` · `POST /api/upload` (new email + attachments) · `POST /api/run` · `GET /api/stats` · `GET /api/insights` · `GET /api/audit` · `GET /api/export/discrepancies.csv` · `GET /report/{id}` · `GET /api/submission` · `POST /api/submit` · `GET /api/health`
+
+Time-saved assumptions are configurable: `SHIPCHECK_TRIAGE_MIN` (1.5), `SHIPCHECK_CHECK_MIN` (10), `SHIPCHECK_REVIEW_MIN` (4).
 
 ---
 
@@ -143,6 +160,7 @@ gcloud run deploy shipcheck-ai --source . --region asia-southeast1 \
 - **PDF label overflow.** Long bold labels such as *Notify Party/Intermediate Consignee* overlap the value column, and plain text extraction produces `ConsCigEnReIEeX`. We rebuild each line from characters and split the bold label from the regular-weight value.
 - **Weights.** `243588`, `243,588`, `243,588 KG`, `45.500,00 KGS` and `45.5 MT` are the same kind of value, while `NET WEIGHT` and per-container rows are traps.
 - **Wrong or missing documents.** Document type is read from the header, so a Commercial Invoice named `_BL.txt` is caught.
+- **Thread safety.** The PDF renderer (pdfium) is not thread-safe. Under parallel batch processing, scanned pages were sometimes reported as "corrupt". PDF work is now serialised.
 - **Knowing when not to answer.** Blank values, scans and corrupt files go to a person with the evidence. The system does not guess.
 
 ## Roadmap

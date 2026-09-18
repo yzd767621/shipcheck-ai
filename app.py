@@ -11,6 +11,7 @@ Environment:
 from __future__ import annotations
 
 import collections
+import contextlib
 import json
 import os
 import sys
@@ -46,7 +47,13 @@ class UploadAwareInbox(Inbox):
 
 inbox = UploadAwareInbox(SOURCE)
 pipeline = Pipeline(inbox)
-app = FastAPI(title="ShipCheck AI", version="1.0.0")
+@contextlib.asynccontextmanager
+async def _lifespan(_app):
+    _startup()
+    yield
+
+
+app = FastAPI(title="ShipCheck AI", version="1.1.0", lifespan=_lifespan)
 _job = {"running": False, "done": 0, "total": 0, "started": None, "finished": None}
 _job_lock = threading.Lock()
 
@@ -81,10 +88,18 @@ def _run_all(ids: list[str] | None = None):
             _job.update(running=False, finished=now())
 
 
-@app.on_event("startup")
 def _startup():
-    if store.count() == 0:
-        threading.Thread(target=_run_all, daemon=True).start()
+    # Process anything not yet in the store (first boot, or a run interrupted by a restart).
+    def resume():
+        try:
+            have = {r["email_id"] for r in store.all()}
+            missing = [e["email_id"] for e in inbox.emails() if e["email_id"] not in have]
+        except Exception:
+            return
+        if missing:
+            _run_all(missing)
+
+    threading.Thread(target=resume, daemon=True).start()
 
 
 # ------------------------------------------------------------------ API
@@ -242,6 +257,156 @@ def stats():
 @app.get("/api/audit")
 def audit():
     return store.audit()
+
+
+# Manual-effort assumptions for the time-saved estimate (minutes). Shown in the
+# UI next to the number so the claim is transparent and adjustable.
+MANUAL_TRIAGE_MIN = float(os.environ.get("SHIPCHECK_TRIAGE_MIN", "1.5"))
+MANUAL_CHECK_MIN = float(os.environ.get("SHIPCHECK_CHECK_MIN", "10"))
+HUMAN_REVIEW_MIN = float(os.environ.get("SHIPCHECK_REVIEW_MIN", "4"))
+
+
+def _domain(sender: str) -> str:
+    return (sender or "").split("@")[-1].lower() or "unknown"
+
+
+@app.get("/api/insights")
+def insights():
+    rs = [r for r in store.all()]
+    n = len(rs)
+    checked = [r for r in rs if r.get("category") == "BL_COMPARISON" and r.get("status") in ("OK", "MISMATCH")]
+    mism = [r for r in checked if r.get("status") == "MISMATCH"]
+    review = [r for r in rs if r.get("needs_human")]
+    resolved_auto = n - len(review)
+
+    manual_min = n * MANUAL_TRIAGE_MIN + len(checked) * MANUAL_CHECK_MIN
+    residual_min = len(review) * HUMAN_REVIEW_MIN
+    saved_h = max(0.0, (manual_min - residual_min) / 60)
+
+    # Sender hotspots: who sends drafts that most often disagree with the SI?
+    by_dom: dict[str, dict] = {}
+    for r in checked:
+        d = by_dom.setdefault(_domain(r.get("from")), {"domain": _domain(r.get("from")), "checks": 0, "mismatches": 0,
+                                                       "fields": collections.Counter()})
+        d["checks"] += 1
+        if r["status"] == "MISMATCH":
+            d["mismatches"] += 1
+            d["fields"].update(r.get("defect_fields") or [])
+    hotspots = sorted(by_dom.values(), key=lambda d: (-d["mismatches"], -d["checks"]))
+    for d in hotspots:
+        d["rate"] = round(d["mismatches"] / d["checks"], 3) if d["checks"] else 0
+        d["top_field"] = d["fields"].most_common(1)[0][0] if d["fields"] else None
+        d["fields"] = dict(d["fields"])
+
+    # Discrepancy size: how far off are weights and counts?
+    weight_deltas, count_deltas = [], []
+    for r in mism:
+        for c in r.get("comparison") or []:
+            if c.get("status") != "mismatch" or c.get("si_norm") is None or c.get("bl_norm") is None:
+                continue
+            try:
+                delta = float(c["bl_norm"]) - float(c["si_norm"])
+            except ValueError:
+                continue
+            (weight_deltas if c["field"] == "gross_weight_kg" else count_deltas if c["field"] == "container_count" else []).append(delta)
+
+    conf = collections.Counter()
+    for r in rs:
+        c = r.get("category_confidence") or 0
+        conf["≥ 90%" if c >= 0.9 else "75–89%" if c >= 0.75 else "50–74%" if c >= 0.5 else "< 50%"] += 1
+
+    fmt = collections.Counter((d.get("format") or "?").upper() for r in rs for d in (r.get("documents") or []))
+    return {
+        "total": n,
+        "bl_checks": sum(1 for r in rs if r.get("category") == "BL_COMPARISON"),
+        "compared": len(checked),
+        "mismatches": len(mism),
+        "mismatch_rate": round(len(mism) / len(checked), 3) if checked else 0,
+        "open_reviews": len(review),
+        "automation_rate": round(resolved_auto / n, 3) if n else 0,
+        "hours_saved": round(saved_h, 1),
+        "assumptions": {"triage_min": MANUAL_TRIAGE_MIN, "check_min": MANUAL_CHECK_MIN, "review_min": HUMAN_REVIEW_MIN},
+        "categories": collections.Counter(r.get("category") for r in rs),
+        "bl_status": collections.Counter(r.get("status") for r in rs if r.get("category") == "BL_COMPARISON"),
+        "defect_fields": collections.Counter(f for r in mism for f in (r.get("defect_fields") or [])),
+        "review_reasons": collections.Counter(r.get("review_reason") for r in review if r.get("review_reason")),
+        "hotspots": hotspots[:8],
+        "weight_deltas": sorted(weight_deltas),
+        "count_deltas": sorted(count_deltas),
+        "confidence": conf,
+        "engines": collections.Counter(r.get("category_engine") for r in rs),
+        "formats": fmt,
+        "reviewed": sum(1 for r in rs if r.get("reviewed")),
+    }
+
+
+@app.get("/api/export/discrepancies.csv")
+def export_csv():
+    import csv
+    import io
+    from fastapi.responses import Response
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["email_id", "from", "subject", "status", "review_reason", "field", "si_value", "bl_value", "note"])
+    for r in store.all():
+        if r.get("category") != "BL_COMPARISON" or r.get("status") not in ("MISMATCH", "NEEDS_REVIEW"):
+            continue
+        rows = [c for c in r.get("comparison") or [] if c.get("status") != "match"]
+        if not rows:
+            w.writerow([r["email_id"], r.get("from"), r.get("subject"), r.get("status"), r.get("review_reason"), "", "", "",
+                        r.get("review_detail") or ""])
+        for c in rows:
+            first = lambda v: (v or "").splitlines()[0] if v else ""
+            w.writerow([r["email_id"], r.get("from"), r.get("subject"), r.get("status"), r.get("review_reason"),
+                        c.get("label"), first(c.get("si_raw")), first(c.get("bl_raw")), c.get("note") or c.get("status")])
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="discrepancies.csv"'})
+
+
+@app.get("/report/{email_id}", response_class=HTMLResponse)
+def report(email_id: str):
+    """Printable one-page discrepancy report (browser Print → Save as PDF)."""
+    import html
+
+    r = store.get(email_id)
+    if not r:
+        raise HTTPException(404)
+    e = html.escape
+    first = lambda v: e((v or "—").splitlines()[0])
+    verdict = {"OK": ("No mismatch detected", "ok"), "MISMATCH": (f"{len(r.get('defect_fields') or [])} field(s) need amendment", "bad"),
+               "NEEDS_REVIEW": ("Needs human review", "warn"), "AWAITING_DOCUMENTS": ("Awaiting documents", "info")}.get(
+        r.get("status"), (r.get("status") or "", "info"))
+    rows = "".join(
+        f"<tr class='{ 'bad' if c['status']=='mismatch' else 'warn' if c['status'].startswith('missing') else ''}'>"
+        f"<td>{e(c['label'])}</td><td>{first(c.get('si_raw'))}</td><td>{first(c.get('bl_raw'))}</td>"
+        f"<td>{'Match' if c['status']=='match' else 'Mismatch' if c['status']=='mismatch' else 'Missing'}"
+        f"{'<br><small>'+e(c['note'])+'</small>' if c.get('note') else ''}</td></tr>"
+        for c in r.get("comparison") or [])
+    hist = "".join(f"<li>{e(h.get('at',''))} · {e(str(h.get('by','')))} · {e(json.dumps(h.get('decision',{}))[:160])}</li>"
+                   for h in r.get("history") or [])
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>Discrepancy report · {e(email_id)}</title>
+<style>
+body{{font:13px/1.5 Inter,system-ui,sans-serif;color:#111827;max-width:820px;margin:32px auto;padding:0 24px}}
+h1{{font-size:20px;margin:0}} .muted{{color:#6b7280}} .brand{{font-weight:700;color:#4f46e5}}
+.top{{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #e5e7eb;padding-bottom:14px;margin-bottom:18px}}
+.v{{display:inline-block;padding:6px 12px;border-radius:8px;font-weight:600;margin:6px 0 14px}}
+.v.ok{{background:#ecfdf3;color:#067647}} .v.bad{{background:#fef3f2;color:#b42318}} .v.warn{{background:#fffaeb;color:#b54708}} .v.info{{background:#eff4ff;color:#3538cd}}
+table{{width:100%;border-collapse:collapse;margin-top:8px}} th,td{{text-align:left;padding:8px 10px;border-bottom:1px solid #eaecf0;vertical-align:top}}
+th{{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}} tr.bad td{{background:#fef3f2}} tr.warn td{{background:#fffaeb}}
+td:nth-child(2),td:nth-child(3){{font-family:ui-monospace,Consolas,monospace;font-size:12px}}
+.btn{{border:1px solid #d0d5dd;background:#fff;border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}}
+@media print{{.noprint{{display:none}} body{{margin:0}}}}
+</style></head><body>
+<div class="top"><div><div class="brand">ShipCheck AI</div><h1>SI vs draft BL discrepancy report</h1>
+<div class="muted">{e(r.get('subject',''))}<br>{e(email_id)} · from {e(r.get('from',''))} · checked {e(r.get('processed_at',''))}</div></div>
+<button class="btn noprint" onclick="print()">Print / Save PDF</button></div>
+<div class="v {verdict[1]}">{e(verdict[0])}</div>
+<p>{e(r.get('summary') or '')}{('<br><b>Review:</b> '+e(r.get('review_detail'))) if r.get('review_detail') else ''}</p>
+<table><thead><tr><th>Field</th><th>Shipping Instruction (reference)</th><th>Draft Bill of Lading</th><th>Result</th></tr></thead><tbody>{rows or '<tr><td colspan=4 class=muted>No comparison available.</td></tr>'}</tbody></table>
+{('<h3>Review history</h3><ul class=muted>'+hist+'</ul>') if hist else ''}
+<p class="muted" style="margin-top:24px">Generated by ShipCheck AI · category {e(r.get('category',''))} ({int((r.get('category_confidence') or 0)*100)}% confidence, {e(r.get('category_engine') or '')})</p>
+</body></html>"""
 
 
 @app.get("/api/submission")

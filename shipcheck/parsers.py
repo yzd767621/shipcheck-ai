@@ -7,7 +7,12 @@ string so the pipeline can escalate it to a human with the reason.
 from __future__ import annotations
 
 import io
+import threading
 from dataclasses import dataclass, field
+
+# pdfium (used by pdfplumber for page rendering) is not thread-safe; the batch
+# runner processes emails in parallel, so all PDF work is serialised here.
+_PDF_LOCK = threading.Lock()
 
 
 @dataclass
@@ -57,10 +62,16 @@ def _parse_txt(path: str, data: bytes) -> ParsedDoc:
 
 
 def _parse_pdf(path: str, data: bytes) -> ParsedDoc:
+    with _PDF_LOCK:
+        return _parse_pdf_unlocked(path, data)
+
+
+def _parse_pdf_unlocked(path: str, data: bytes) -> ParsedDoc:
     import pdfplumber
 
     lines: list[str] = []
     images: list[bytes] = []
+    has_images = False
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         if not pdf.pages:
             return ParsedDoc(path, "pdf", readable=False, issue="corrupt (no pages)")
@@ -69,10 +80,14 @@ def _parse_pdf(path: str, data: bytes) -> ParsedDoc:
             if txt.strip():
                 lines.extend(_pdf_lines(page) or txt.splitlines())
             elif page.images:
-                buf = io.BytesIO()
-                page.to_image(resolution=200).original.save(buf, format="PNG")
-                images.append(buf.getvalue())
-    if not lines and images:
+                has_images = True
+                try:
+                    buf = io.BytesIO()
+                    page.to_image(resolution=200).original.save(buf, format="PNG")
+                    images.append(buf.getvalue())
+                except Exception:
+                    pass  # still an image-only page; just no preview for the vision model
+    if not lines and has_images:
         return ParsedDoc(path, "pdf", readable=False, issue="image_only", image_pages=images)
     return ParsedDoc(path, "pdf", lines=lines)
 
