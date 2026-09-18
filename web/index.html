@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShipCheck AI</title>
+<style>
+:root{
+  --bg:#f5f6f4;--panel:#ffffff;--ink:#17201d;--muted:#5d6a65;--line:#dfe4e1;--soft:#eef1ef;
+  --accent:#0f6b5c;--accent-ink:#ffffff;--bad:#b3261e;--bad-bg:#fbe9e7;--warn:#8a5a00;--warn-bg:#fff4dc;
+  --ok:#1b6e3a;--ok-bg:#e5f4ea;--info:#1f4f8a;--info-bg:#e6eef9;--mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#101413;--panel:#171d1b;--ink:#e6ece9;--muted:#9aa8a2;--line:#2a3330;--soft:#1f2724;
+  --accent:#4fb8a3;--accent-ink:#0b1311;--bad:#ff8a80;--bad-bg:#3a1b19;--warn:#f2c46b;--warn-bg:#352a12;
+  --ok:#7fd49b;--ok-bg:#15301f;--info:#8cb6ef;--info-bg:#16263b;}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+a.btn{text-decoration:none;color:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header h1{font-size:17px;margin:0;letter-spacing:.2px}
+header h1 span{color:var(--accent)}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:99px;font-size:12px;background:var(--soft);color:var(--muted);white-space:nowrap}
+.pill.ai{background:var(--info-bg);color:var(--info)}
+.spacer{flex:1}
+.btn{border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:7px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:disabled{opacity:.5;cursor:default}
+main{display:grid;grid-template-columns:minmax(300px,420px) 1fr;height:calc(100vh - 57px)}
+@media (max-width:860px){main{grid-template-columns:1fr;height:auto}#detail{border-top:1px solid var(--line)}}
+#left{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+.kpi{background:var(--panel);padding:10px 12px;cursor:pointer}
+.kpi b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.kpi small{color:var(--muted);font-size:11.5px}
+.kpi.active{box-shadow:inset 0 -3px 0 var(--accent)}
+.filters{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+.filters input{flex:1;min-width:140px;padding:6px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg)}
+.filters select{flex:1;min-width:120px;padding:6px;border:1px solid var(--line);border-radius:7px;background:var(--bg)}
+#list{overflow:auto;flex:1}
+.row{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.row:hover{background:var(--soft)}
+.row.sel{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
+.row .subj{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.row .meta{grid-column:1/-1;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tag{font-size:11px;padding:1px 7px;border-radius:5px;font-weight:600;letter-spacing:.2px;white-space:nowrap}
+.t-MISMATCH{background:var(--bad-bg);color:var(--bad)}
+.t-NEEDS_REVIEW,.t-ERROR{background:var(--warn-bg);color:var(--warn)}
+.t-OK{background:var(--ok-bg);color:var(--ok)}
+.t-AWAITING_DOCUMENTS{background:var(--info-bg);color:var(--info)}
+.t-cat{background:var(--soft);color:var(--muted)}
+#detail{overflow:auto;padding:20px 24px 60px}
+.empty{color:var(--muted);padding:40px;text-align:center}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+.banner{border-radius:10px;padding:12px 16px;margin-bottom:14px;font-weight:500}
+.banner.MISMATCH{background:var(--bad-bg);color:var(--bad)}
+.banner.NEEDS_REVIEW,.banner.ERROR{background:var(--warn-bg);color:var(--warn)}
+.banner.OK{background:var(--ok-bg);color:var(--ok)}
+.banner.AWAITING_DOCUMENTS{background:var(--info-bg);color:var(--info)}
+.banner small{display:block;font-weight:400;opacity:.9;margin-top:3px}
+h2{margin:0 0 4px;font-size:18px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:14px;word-break:break-word}
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+tr.mismatch td{background:var(--bad-bg)}
+tr.mismatch td.v{color:var(--bad);font-weight:600}
+tr.missing td{background:var(--warn-bg)}
+td.v{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+td .lbl{display:block;font-family:system-ui;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px}
+.note{font-size:12px;color:var(--muted)}
+.sig{margin:0;padding-left:18px;color:var(--muted);font-size:12.5px}
+.docs{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font:12px/1.45 var(--mono);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;margin:6px 0 0}
+.grid2{display:grid;grid-template-columns:140px 1fr 1fr;gap:6px 10px;align-items:center}
+.grid2 input{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);font-family:var(--mono);font-size:12.5px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);width:min(560px,92vw);padding:18px}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+dialog label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+dialog input,dialog textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg)}
+.bar{height:6px;background:var(--soft);border-radius:4px;overflow:hidden;width:120px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>Ship<span>Check</span> AI</h1>
+  <span class="pill" id="engine">…</span>
+  <span class="pill" id="job" hidden><span class="bar"><i id="jobbar" style="width:0"></i></span><span id="jobtxt"></span></span>
+  <span class="spacer"></span>
+  <button class="btn" id="btn-upload">+ New email</button>
+  <button class="btn" id="btn-run">Re-process inbox</button>
+  <a class="btn" href="/api/submission" download>Export submission.json</a>
+</header>
+<main>
+  <section id="left">
+    <div class="kpis" id="kpis"></div>
+    <div class="filters">
+      <input id="q" placeholder="Search subject, sender, id…">
+      <select id="fcat"><option value="">All categories</option></select>
+      <select id="fstatus"><option value="">Any status</option><option>MISMATCH</option><option>NEEDS_REVIEW</option><option>OK</option><option>AWAITING_DOCUMENTS</option><option>ERROR</option></select>
+    </div>
+    <div id="list"></div>
+  </section>
+  <section id="detail"><div class="empty">Select an email to see how it was classified and checked.</div></section>
+</main>
+
+<dialog id="dlg-upload">
+  <form method="dialog" id="upform">
+    <h2>Drop a new email into the inbox</h2>
+    <div class="sub">Try messy inputs: a PDF / DOCX / XLSX pair, a scanned page, a wrong document or no attachment.</div>
+    <label>From</label><input name="sender" value="customer@example.com">
+    <label>Subject</label><input name="subject" required value="TO CONFIRM DOCS _ demo shipment">
+    <label>Body</label><textarea name="body" rows="4">Dear Team,
+
+Please check the draft BL against the SI and revert with any discrepancy.</textarea>
+    <label>Attachments (SI and draft BL)</label><input type="file" name="files" multiple>
+    <div class="actions"><button class="btn primary" value="ok">Process</button><button class="btn" value="cancel" formnovalidate>Cancel</button></div>
+  </form>
+</dialog>
+
+<script>
+const FIELD_ORDER=["shipper","consignee","notify_party","port_of_loading","port_of_discharge","container_count","gross_weight_kg"];
+const LABEL={shipper:"Shipper",consignee:"Consignee",notify_party:"Notify party",port_of_loading:"Port of loading",port_of_discharge:"Port of discharge",container_count:"Container count",gross_weight_kg:"Gross weight (kg)"};
+const CATS=["BL_COMPARISON","SI_REQUEST","INVOICE_QUERY","GENERAL","SPAM"];
+const REASON={wrong_doc_type:"Wrong document type",missing_attachment:"Missing attachment",unreadable:"Unreadable document",missing_value:"Missing value",low_confidence:"Low confidence"};
+let rows=[],sel=null,kpiFilter="";
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const NAMES={BL_COMPARISON:"BL check",SI_REQUEST:"SI request",INVOICE_QUERY:"Invoice query",GENERAL:"General",SPAM:"Spam",NEEDS_REVIEW:"Needs review",AWAITING_DOCUMENTS:"Awaiting documents",MISMATCH:"Mismatch",OK:"OK",ERROR:"Error",SI:"SI",BL:"Draft BL"};
+const pretty=s=>NAMES[s]||String(s||"").replace(/_/g," ").toLowerCase().replace(/^\w/,c=>c.toUpperCase());
+async function api(p,o){const r=await fetch(p,o);if(!r.ok)throw new Error((await r.text())||r.status);return r.json()}
+CATS.forEach(c=>$("#fcat").insertAdjacentHTML("beforeend",`<option value="${c}">${pretty(c)}</option>`));
+
+function statusOf(r){return r.category==="BL_COMPARISON"||r.status==="ERROR"?r.status:null}
+async function load(){
+  rows=await api("/api/emails");
+  const s=await api("/api/stats");
+  const k=[["","Emails",s.total],["review","Needs a person",s.open_reviews],["MISMATCH","Discrepancies",s.bl_status.MISMATCH||0],["BL_COMPARISON","BL checks",s.categories.BL_COMPARISON||0]];
+  $("#kpis").innerHTML=k.map(([f,l,v])=>`<div class="kpi ${kpiFilter===f?"active":""}" data-f="${f}"><b>${v}</b><small>${l}</small></div>`).join("");
+  document.querySelectorAll(".kpi").forEach(el=>el.onclick=()=>{kpiFilter=el.dataset.f;render();load()});
+  render();
+}
+function render(){
+  const q=$("#q").value.toLowerCase(),fc=$("#fcat").value,fs=$("#fstatus").value;
+  const list=rows.filter(r=>{
+    if(kpiFilter==="review"&&!r.needs_human)return false;
+    if(kpiFilter==="MISMATCH"&&r.status!=="MISMATCH")return false;
+    if(kpiFilter==="BL_COMPARISON"&&r.category!=="BL_COMPARISON")return false;
+    if(fc&&r.category!==fc)return false;
+    if(fs&&statusOf(r)!==fs)return false;
+    return !q||(r.subject+" "+r.from+" "+r.email_id).toLowerCase().includes(q)});
+  $("#list").innerHTML=list.map(r=>{const st=statusOf(r);return `<div class="row ${sel===r.email_id?"sel":""}" data-id="${r.email_id}">
+    <div class="subj">${esc(r.subject)||"(no subject)"}</div>
+    <div class="chips">${st?`<span class="tag t-${st}">${pretty(st)}</span>`:`<span class="tag t-cat">${pretty(r.category)}</span>`}</div>
+    <div class="meta">${esc(r.email_id)} · ${esc(r.from)} · ${pretty(r.category)}${r.review_reason?" · "+REASON[r.review_reason]:""}${r.defect_fields&&r.defect_fields.length?" · "+r.defect_fields.map(f=>LABEL[f]).join(", "):""}${r.reviewed?" · ✔ reviewed":""}</div></div>`}).join("")||`<div class="empty">No emails match.</div>`;
+  document.querySelectorAll(".row").forEach(el=>el.onclick=()=>show(el.dataset.id));
+}
+["#q","#fcat","#fstatus"].forEach(s=>$(s).addEventListener("input",render));
+
+async function show(id){
+  sel=id;render();history.replaceState(null,"","#"+id);
+  const r=await api("/api/emails/"+encodeURIComponent(id));
+  const st=r.category==="BL_COMPARISON"||r.status==="ERROR"?r.status:null;
+  let h=`<h2>${esc(r.subject)}</h2><div class="sub">${esc(r.email_id)} · from ${esc(r.from)} · processed ${esc(r.processed_at)} · engine: ${esc(r.engine)}</div>`;
+  if(st){
+    const title={OK:"No mismatch detected.",MISMATCH:`${r.defect_fields.length} field${r.defect_fields.length>1?"s":""} need${r.defect_fields.length>1?"":"s"} attention`,NEEDS_REVIEW:"Sent to a person for review — "+(REASON[r.review_reason]||""),AWAITING_DOCUMENTS:"Awaiting documents",ERROR:"Processing failed"}[st];
+    h+=`<div class="banner ${st}">${esc(title)}<small>${esc(st==="ERROR"?r.error:(r.review_detail&&st!=="NEEDS_REVIEW"?r.summary+" · "+r.review_detail:r.summary))}</small></div>`;
+  }
+  // classification
+  h+=`<div class="card"><h3>Classification</h3><div><span class="tag t-cat">${pretty(r.category)}</span> &nbsp;confidence ${Math.round((r.category_confidence||0)*100)}% · decided by <b>${esc(r.category_engine)}</b></div>
+      <ul class="sig">${(r.category_signals||[]).map(s=>`<li>${esc(s)}</li>`).join("")}</ul></div>`;
+  // comparison
+  if(r.comparison&&r.comparison.length){
+    h+=`<div class="card"><h3>SI vs draft BL (SI is the reference)</h3><div class="tbl-wrap"><table><thead><tr><th>Field</th><th>SI</th><th>Draft BL</th><th>Result</th></tr></thead><tbody>`;
+    const si=(r.documents||[]).find(d=>d.role==="SI")||{fields:{}},bl=(r.documents||[]).find(d=>d.role==="BL")||{fields:{}};
+    r.comparison.forEach(c=>{
+      const cls=c.status==="mismatch"?"mismatch":c.status.startsWith("missing")?"missing":"";
+      const lab=(d,k)=>d.fields&&d.fields[k]?`<span class="lbl">“${esc(d.fields[k].label)}”${d.fields[k].method&&d.fields[k].method!=="lexicon"?" · via "+esc(d.fields[k].method):""}</span>`:"";
+      h+=`<tr class="${cls}"><td>${esc(c.label)}</td><td class="v">${esc(c.si_raw||"—")}${lab(si,c.field)}</td><td class="v">${esc(c.bl_raw||"—")}${lab(bl,c.field)}</td>
+          <td>${c.status==="match"?"✓ match":c.status==="mismatch"?"✗ mismatch":"⚠ "+pretty(c.status)}${c.note?`<div class="note">${esc(c.note)}</div>`:""}</td></tr>`});
+    h+=`</tbody></table></div>${(r.notes||[]).map(n=>`<div class="note">ℹ ${esc(n)}</div>`).join("")}</div>`;
+  }
+  // review form
+  if(r.category==="BL_COMPARISON"||r.needs_human){
+    h+=`<div class="card" id="review"><h3>Human review</h3><div class="note" style="margin-bottom:10px">Confirm or correct the values; the report is recomputed and the change is recorded in the audit trail.</div>
+      <div class="grid2"><b class="note">Field</b><b class="note">SI value</b><b class="note">Draft BL value</b>`;
+    const cmp=Object.fromEntries((r.comparison||[]).map(c=>[c.field,c]));
+    const scan=(r.documents||[]).map(d=>d.ai_read).filter(a=>a&&a.fields);
+    FIELD_ORDER.forEach(f=>{const c=cmp[f]||{};
+      const aiSI=scan.find(a=>a.doc_type==="SI"),aiBL=scan.find(a=>a.doc_type==="BL");
+      const v1=(c.si_raw||(aiSI&&aiSI.fields[f])||"").split("\n")[0],v2=(c.bl_raw||(aiBL&&aiBL.fields[f])||"").split("\n")[0];
+      h+=`<span>${LABEL[f]}</span><input data-side="si" data-f="${f}" value="${esc(v1)}"><input data-side="bl" data-f="${f}" value="${esc(v2)}">`});
+    h+=`</div><div class="grid2" style="grid-template-columns:140px 1fr;margin-top:10px"><span>Category</span><select id="rv-cat">${CATS.map(c=>`<option ${c===r.category?"selected":""} value="${c}">${pretty(c)}</option>`).join("")}</select>
+      <span>Reviewer</span><input id="rv-who" value="ops.reviewer"><span>Note</span><input id="rv-note" placeholder="optional"></div>
+      ${scan.length?`<div class="note" style="margin-top:8px">Pre-filled from Claude's reading of the scanned pages — verify against the image before confirming.</div>`:""}
+      <div class="actions"><button class="btn primary" id="rv-save">Confirm & recompute</button><button class="btn" id="rv-retry">Retry processing</button><button class="btn" id="rv-reply">Draft reply to sender</button></div>
+      <pre id="reply" hidden></pre></div>`;
+  }else{
+    h+=`<div class="card"><div class="grid2" style="grid-template-columns:140px 1fr"><span>Correct category</span><select id="rv-cat">${CATS.map(c=>`<option ${c===r.category?"selected":""} value="${c}">${pretty(c)}</option>`).join("")}</select></div>
+      <div class="actions"><button class="btn" id="rv-save">Save category</button><button class="btn" id="rv-retry">Retry processing</button></div></div>`;
+  }
+  // documents
+  if((r.documents||[]).length){
+    h+=`<div class="card"><h3>Source documents</h3><div class="docs">`+r.documents.map(d=>`<div><b>${esc(d.path.split("/").pop())}</b> <span class="tag t-cat">${esc(d.doc_type?pretty(d.doc_type):"type unknown")}</span>
+      ${d.readable?"":`<span class="tag t-NEEDS_REVIEW">${esc(d.issue)}</span>`} <a class="note" href="/api/attachments/${encodeURI(d.path)}" target="_blank">open</a>
+      ${d.ai_read?`<pre>${esc(JSON.stringify(d.ai_read,null,2))}</pre>`:""}
+      ${d.text?`<pre>${esc(d.text)}</pre>`:""}</div>`).join("")+`</div></div>`;
+  }
+  h+=`<div class="card"><h3>Email</h3><pre>${esc(r.body)}</pre></div>`;
+  if((r.history||[]).length)h+=`<div class="card"><h3>History</h3><pre>${esc(JSON.stringify(r.history,null,2))}</pre></div>`;
+  $("#detail").innerHTML=h;$("#detail").scrollTop=0;
+  const save=$("#rv-save");
+  if(save)save.onclick=async()=>{
+    const dec={reviewer:($("#rv-who")||{}).value||"reviewer",note:($("#rv-note")||{}).value||"",category:$("#rv-cat").value,si:{},bl:{}};
+    document.querySelectorAll("#review input[data-f]").forEach(i=>{dec[i.dataset.side][i.dataset.f]=i.value});
+    save.disabled=true;await api(`/api/emails/${id}/review`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(dec)});await load();show(id)};
+  const rt=$("#rv-retry");if(rt)rt.onclick=async()=>{rt.disabled=true;await api(`/api/emails/${id}/retry`,{method:"POST"});await load();show(id)};
+  const rp=$("#rv-reply");if(rp)rp.onclick=async()=>{rp.disabled=true;rp.textContent="Drafting…";const d=await api(`/api/emails/${id}/draft-reply`,{method:"POST"});
+    const p=$("#reply");p.hidden=false;p.textContent=(d.warning?"["+d.warning+"]\n\n":"")+d.text;rp.textContent="Drafted by "+d.engine;};
+}
+
+async function poll(){
+  try{const s=await api("/api/status");
+    $("#engine").textContent=s.llm?"AI: "+s.model+" + rules":"Rules engine (set ANTHROPIC_API_KEY for Claude)";$("#engine").className="pill"+(s.llm?" ai":"");
+    $("#job").hidden=!s.running;$("#btn-run").disabled=s.running;
+    if(s.running){$("#jobbar").style.width=(100*s.done/Math.max(1,s.total))+"%";$("#jobtxt").textContent=`${s.done}/${s.total}`;}
+    if(s.running||poll.was){await load()}poll.was=s.running;
+  }catch(e){}
+  setTimeout(poll,s_int());
+}
+const s_int=()=>poll.was?1200:6000;
+$("#btn-run").onclick=async()=>{await api("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});poll.was=true};
+$("#btn-upload").onclick=()=>$("#dlg-upload").showModal();
+$("#upform").addEventListener("submit",async ev=>{
+  if(ev.submitter&&ev.submitter.value!=="ok")return;
+  ev.preventDefault();const fd=new FormData(ev.target);
+  const r=await api("/api/upload",{method:"POST",body:fd});$("#dlg-upload").close();await load();show(r.email_id)});
+load().then(()=>{if(location.hash.length>1)show(decodeURIComponent(location.hash.slice(1)))});poll();
+</script>
+</body>
+</html>

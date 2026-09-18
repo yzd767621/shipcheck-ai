@@ -1,0 +1,154 @@
+# ShipCheck AI
+
+**From a shared shipping inbox to a discrepancy report, with a person in the loop.**
+
+ShipCheck AI reads every email in a shipping-operations inbox and decides what it is: a draft-BL check, a new SI request, an invoice query, a general update or spam. For each check request it reads the attached **Shipping Instruction (SI)** and **draft Bill of Lading (BL)** in TXT, PDF, Word or Excel format. It lines up fields that are labelled differently ("Port of Loading" = "Load Port" = "POL") and compares the seven shipment fields. The report shows the SI and BL values side by side.
+
+When the system cannot decide safely, it hands the case to a person with the evidence and the reason. Examples: a scanned or corrupt file, a missing or wrong attachment, or a blank value. The reviewer confirms or corrects the values, and the report is recalculated and logged.
+
+Built for the **Averis × Monash Hackathon 2026: Shipping Document Verification** use case.
+
+---
+
+## Results on the provided dataset (520 emails)
+
+Scored with the organisers' self-evaluation (`POST /submit` / `score_cli.py`):
+
+| Metric | Score |
+|---|---|
+| Stage 1: email classification, macro-F1 | **1.000** (520/520) |
+| Stage 3: SI-vs-BL defect precision / recall / field-F1 | **1.000 / 1.000 / 1.000** |
+| End-to-end: defects caught with the exact fields | **46/46** |
+| Reliability: escalation precision / recall | **1.000 / 1.000** (20/20, correct reason each time) |
+| **Final score** | **1.0000** |
+
+The engine never sees the answer key. The results above come from general rules plus the checks in `tests/`. Those 41 tests use synthetic messy inputs that are **not** in the dataset: EU number formats, MT units, `2 x 40'HC + 1 x 20'GP`, port aliases, swapped file names, Word tables, corrupt PDFs and placeholder values.
+
+---
+
+## What it does
+
+| Capability | How |
+|---|---|
+| **Classify** | An explainable weighted-signal classifier reads the *newest* message body. It strips external-sender banners, quoted threads and signatures, because subjects such as `RE_ TO CONFIRM DOCS` are recycled and misleading. It also looks at what is attached. Each decision comes with a confidence score and the signals that fired. **Claude** decides whenever confidence is below 0.75. |
+| **Extract** | Parsers for TXT, PDF (character-level, splitting bold labels from values so overflowing labels don't mix with values), DOCX (tables in body order) and XLSX. A label lexicon of about 60 variants, including bilingual `PORT OF LOADING (装货港)`, aligns fields by meaning. Net weight and per-container rows are never taken as the gross total. When a label is not recognised, **Claude** finds the field in the document text and records the evidence line. |
+| **Compare** | Normalisation removes formatting noise before comparing: legal suffixes (`LIMITED`→`LTD`), punctuation, UN/LOCODEs, port and country aliases (`Ho Chi Minh City, Viet Nam` = `HOCHIMINH CITY, VIETNAM`), thousands separators, `MT`/`LBS` to kg, and container expressions. Real differences are flagged with SI and BL side by side, the size of the difference, and a lower-confidence note when two names differ only slightly (a possible typo). |
+| **Ask for help** | `NEEDS_REVIEW` with a reason and evidence: `unreadable` (corrupt or image-only file; **Claude vision** pre-reads the scan so the reviewer only has to confirm), `wrong_doc_type` (e.g. a Commercial Invoice in the BL slot, detected from the document header rather than the file name), `missing_attachment`, and `missing_value` (N/A, TBA, `____ MT`). The reviewer's correction recalculates the report, and the full history is stored. Processing failures show up as `ERROR` with a **Retry** button. |
+| **Act** | "Draft reply to sender" writes the amendment request email (Claude, with a template fallback). |
+
+"Please send the draft BL for checking" emails are part of the BL-check workflow, but no documents have arrived yet. They are tracked as **Awaiting documents** and are *not* escalated. This keeps the review queue down to cases that really need a person.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[Inbox<br/>JSON + attachments<br/>local folder or HTTP server] --> B[Classifier<br/>rules + confidence]
+    B -- confidence < 0.75 --> C[Claude<br/>structured JSON]
+    C --> D{Category}
+    B --> D
+    D -- SI / invoice / general / spam --> R[(Result store<br/>SQLite)]
+    D -- BL_COMPARISON --> E[Parsers<br/>TXT · PDF · DOCX · XLSX]
+    E -- image-only / corrupt --> V[Claude vision pre-read] --> H
+    E --> F[Doc-type detection<br/>by header, not filename]
+    F --> G[Field alignment<br/>lexicon → keywords → Claude]
+    G --> K[Normalise + compare<br/>7 fields]
+    K -- blank / wrong doc / missing --> H[Human review queue<br/>evidence + reason]
+    K -- match / mismatch --> R
+    H -- confirm / correct --> K
+    R --> UI[Web console + REST API<br/>report · review · retry · reply · export]
+```
+
+**Why hybrid rules + LLM?** Rules are fast, free, deterministic and auditable, and they handle the formats they know perfectly. Claude covers the long tail: new wording, unknown labels, scanned pages and reply writing. It always returns **schema-validated JSON**, and it never overrides a value the rules found blank. The app still runs fully without an API key (rules-only mode), so a demo never depends on the network.
+
+**Cloud:** a stateless container (Docker) deployed on **Google Cloud Run** (or Render). Claude is called through the **Anthropic API** (`claude-opus-5` by default), with server-side refusal fallback enabled.
+
+### Project layout
+
+```
+shipcheck/
+  parsers.py     TXT / PDF / DOCX / XLSX → lines; unreadable files flagged, never raised
+  fields.py      label lexicon, doc-type detection, field extraction with evidence
+  compare.py     normalisation + per-field comparison with confidence and notes
+  classifier.py  explainable rule classifier
+  llm.py         Claude: classify, extract, read_scan (vision), draft_reply
+  pipeline.py    orchestration, escalation rules, human-review recalculation, submission export
+  store.py       SQLite result store + audit log
+app.py           FastAPI app (REST API + web console)
+web/index.html   single-page console (no build step)
+scripts/run_batch.py   CLI: process the inbox, write results + submission.json, optionally submit for scoring
+tests/           41 robustness tests on synthetic messy inputs
+data/            the participant dataset bundle (inbox/, attachments/, loader.py)
+```
+
+---
+
+## Run it locally
+
+```bash
+python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+export ANTHROPIC_API_KEY=sk-ant-...                  # optional: enables Claude (Windows: set ANTHROPIC_API_KEY=...)
+uvicorn app:app --port 8000
+# open http://localhost:8000. The inbox is processed automatically on first start.
+```
+
+Batch mode and self-evaluation:
+
+```bash
+python scripts/run_batch.py                 # writes out/results.json and out/submission.json
+python scripts/run_batch.py --no-llm        # rules only
+python scripts/run_batch.py --source http://localhost:8080 --submit   # against the organisers' inbox server
+python -m pytest -q                         # tests (pip install pytest)
+```
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | none | enables Claude |
+| `SHIPCHECK_MODEL` | `claude-opus-5` | Claude model |
+| `SHIPCHECK_SOURCE` | `./data` | dataset folder or inbox server URL |
+| `SHIPCHECK_DB` | `./out/shipcheck.db` | result store |
+| `SHIPCHECK_DISABLE_LLM` | none | set to `1` to force rules-only |
+
+### REST API
+
+`GET /api/emails` · `GET /api/emails/{id}` · `POST /api/emails/{id}/review` · `POST /api/emails/{id}/retry` · `POST /api/emails/{id}/draft-reply` · `POST /api/upload` (new email + attachments) · `POST /api/run` · `GET /api/stats` · `GET /api/audit` · `GET /api/submission` · `POST /api/submit` · `GET /api/health`
+
+---
+
+## Deploy to the cloud
+
+**Google Cloud Run** (free tier is enough):
+
+```bash
+gcloud auth login
+gcloud config set project <your-project-id>
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
+printf "%s" "$ANTHROPIC_API_KEY" | gcloud secrets create anthropic-api-key --data-file=-
+gcloud run deploy shipcheck-ai --source . --region asia-southeast1 \
+  --allow-unauthenticated --memory 1Gi --min-instances 1 \
+  --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest
+```
+
+(Grant the Cloud Run service account the *Secret Manager Secret Accessor* role if prompted.) `--min-instances 1` keeps the demo warm and the in-container store alive during judging. For durable storage, set `SHIPCHECK_DB` to a mounted Cloud Storage / Filestore volume, or swap `store.py` for Firestore.
+
+**Render:** New → Blueprint → select this repo (`render.yaml`), then set `ANTHROPIC_API_KEY` in the dashboard.
+
+---
+
+## Challenges we hit
+
+- **Misleading subjects.** Many emails reuse old thread subjects, so the classifier reads only the newest message body and the attachments.
+- **PDF label overflow.** Long bold labels such as *Notify Party/Intermediate Consignee* overlap the value column, and plain text extraction produces `ConsCigEnReIEeX`. We rebuild each line from characters and split the bold label from the regular-weight value.
+- **Weights.** `243588`, `243,588`, `243,588 KG`, `45.500,00 KGS` and `45.5 MT` are the same kind of value, while `NET WEIGHT` and per-container rows are traps.
+- **Wrong or missing documents.** Document type is read from the header, so a Commercial Invoice named `_BL.txt` is caught.
+- **Knowing when not to answer.** Blank values, scans and corrupt files go to a person with the evidence. The system does not guess.
+
+## Roadmap
+
+- Live mailbox connectors (Microsoft Graph / Gmail API) and a push-based queue (Pub/Sub).
+- OCR fallback (Tesseract / Document AI) alongside Claude vision, with confidence voting.
+- Learn new label variants from reviewer corrections (feedback into the lexicon).
+- More fields (vessel/voyage, HS code, marks & numbers) and configurable per-customer tolerance rules.
+- Role-based access, SSO, and an exportable PDF discrepancy report for customers.

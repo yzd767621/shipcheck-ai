@@ -1,0 +1,10 @@
+# One-click alternative to Cloud Run: https://render.com -> New -> Blueprint -> this repo
+services:
+  - type: web
+    name: shipcheck-ai
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false        # set in the Render dashboard
