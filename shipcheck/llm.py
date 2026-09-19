@@ -31,21 +31,61 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
+# Why the AI model is (not) active — shown in the UI so a missing or mistyped
+# key is obvious. Only variable NAMES are ever reported, never values.
+STATUS: dict = {"reason": None}
+
+
+def _env_key(*names: str) -> str | None:
+    for n in names:
+        v = os.environ.get(n)
+        if v and v.strip().strip('"').strip("'").strip():
+            return v.strip().strip('"').strip("'").strip()
+    return None
+
+
+def _near_misses() -> list[str]:
+    """Env var names that look like an attempt at an AI key but are not exactly right."""
+    exact = {"GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+    out = []
+    for name in os.environ:
+        up = name.upper()
+        if name not in exact and ("GEMINI" in up or ("GOOGLE" in up and "KEY" in up) or "ANTHROPIC" in up):
+            out.append(repr(name))
+    return out
+
+
 def get_client():
-    choice = os.environ.get("SHIPCHECK_LLM", "auto").lower()
+    choice = os.environ.get("SHIPCHECK_LLM", "auto").strip().lower()
     if os.environ.get("SHIPCHECK_DISABLE_LLM") == "1" or choice in ("none", "off", "rules"):
+        STATUS["reason"] = f"AI model switched off (SHIPCHECK_LLM={choice or 'off'})"
         return None
-    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    claude_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    gemini_key = _env_key("GEMINI_API_KEY", "GOOGLE_API_KEY")
+    claude_key = _env_key("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
     order = {"gemini": ["gemini"], "claude": ["claude"]}.get(choice, ["gemini", "claude"])
+    errors = []
     for name in order:
         try:
             if name == "gemini" and gemini_key:
-                return GeminiClient(gemini_key)
+                client = GeminiClient(gemini_key)
+                STATUS["reason"] = None
+                return client
             if name == "claude" and claude_key:
-                return ClaudeClient()
-        except Exception:
-            continue
+                client = ClaudeClient()
+                STATUS["reason"] = None
+                return client
+        except Exception as exc:
+            errors.append(f"{name} failed to start: {type(exc).__name__}: {exc}")
+    if errors:
+        STATUS["reason"] = "; ".join(errors)
+    elif _near_misses():
+        STATUS["reason"] = ("No usable key. Found variable(s) " + ", ".join(_near_misses()) +
+                            " — the name must be exactly GEMINI_API_KEY (no spaces).")
+    elif os.environ.get("GEMINI_API_KEY") is not None:
+        STATUS["reason"] = "GEMINI_API_KEY is set but empty."
+    else:
+        STATUS["reason"] = ("No GEMINI_API_KEY found in this server's environment. If you just added it, "
+                            "redeploy so the running server picks it up.")
     return None
 
 

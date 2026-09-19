@@ -63,3 +63,19 @@ def test_upload(client):
                     files=[("files", ("a_SI.txt", data)), ("files", ("a_BL.txt", bl))]).json()
     assert r["status"] == "MISMATCH" and set(r["defect_fields"]) == {"port_of_discharge", "container_count"}
     assert len(client.get("/api/submission").json()) == 520          # uploads never leak into the scoring export
+
+
+def test_reviewed_cases_are_kept_with_reviewer(client):
+    r = client.post("/api/emails/email_517/review",
+                    json={"reviewer": "ana", "note": "ports confirmed by phone",
+                          "si": {"port_of_loading": "SINGAPORE", "port_of_discharge": "CALLAO, PERU"}}).json()
+    assert r["reviewed"] and not r["needs_human"]
+    row = next(x for x in client.get("/api/emails").json() if x["email_id"] == "email_517")
+    assert row["reviewed"] and row["reviewed_by"] == "ana" and row["reviewed_from"] == "missing_value"
+    assert row["review_note"] == "ports confirmed by phone" and row["reviewed_at"]
+
+
+def test_ai_check_reports_reason_without_key(client):
+    d = client.post("/api/ai-check").json()
+    assert d["ok"] is False and d["message"]
+    assert "llm_reason" in client.get("/api/status").json()

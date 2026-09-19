@@ -42,13 +42,14 @@ The engine never sees the answer key. The results above come from general rules 
 |---|---|
 | **Inbox + pipeline stepper** | Each email shows *Received → Classified → Extracted → Compared → Result*, so it's clear where and why a case stopped. |
 | **Click-to-evidence** | Click a field in the SI vs BL table (or press `1`–`7`) to highlight the exact source lines in both documents. Staff can trust the flag without re-reading the whole document. |
-| **Review queue** | Only the cases that need a person. Values the system already read are pre-filled, including the OCR / Gemini reading of scanned pages. `Ctrl+Enter` confirms and opens the next case. |
+| **Review queue** | **Open** and **Reviewed** tabs. Open lists only the cases that need a person; resolved cases move to Reviewed with who, when, what the problem was and the reviewer's note. Wrong, missing or unreadable documents can be closed as *Waiting on sender*. Values the system already read are pre-filled, including the OCR / Gemini reading of scanned pages. `Ctrl+Enter` confirms and opens the next case. |
 | **Insights dashboard** | Estimated staff hours saved (with stated assumptions), automation rate, draft-BL error rate, discrepancies by field, review reasons, confidence spread, and **sender hotspots** (which counterparties send the most faulty drafts, and on which field). |
 | **Printable discrepancy report** | A one-page SI vs BL report per email (`/report/{id}`) that can be printed or saved as PDF and attached to the amendment request. |
 | **CSV export** | Every flagged field across the inbox, ready for Excel or a TMS import. |
 | **Reply drafting** | An amendment request or confirmation email, drafted by Gemini (with a template fallback). |
 | **Activity log** | An audit trail of batch runs, uploads, retries and every human decision, including notes. |
 | **Command palette** | `Ctrl+K` searches emails, senders and fields, and runs commands. `J`/`K` move through the list; `?` lists all shortcuts. |
+| **AI status + test** | The sidebar shows whether the AI model is connected and, if not, exactly why (e.g. no `GEMINI_API_KEY` on the server, or a mistyped variable name). **Test AI connection** makes one real call and reports the result. |
 | **Light / dark / system theme** | Responsive layout for laptop and tablet. |
 
 "Please send the draft BL for checking" emails are part of the BL-check workflow, but no documents have arrived yet. They are tracked as **Awaiting documents** and are *not* escalated. This keeps the review queue down to cases that really need a person.
@@ -94,7 +95,7 @@ shipcheck/
 app.py           FastAPI app (REST API + web console)
 web/index.html   single-page operations console (no build step): inbox, review queue, insights, activity
 scripts/run_batch.py   CLI: process the inbox, write results + submission.json, optionally submit for scoring
-tests/           53 tests: messy-input robustness, API, OCR and Gemini (fake transport)
+tests/           58 tests: messy-input robustness, API, OCR and Gemini (fake transport)
 data/            the participant dataset bundle (inbox/, attachments/, loader.py)
 ```
 
@@ -117,7 +118,7 @@ Batch mode and self-evaluation:
 python scripts/run_batch.py                 # writes out/results.json and out/submission.json
 python scripts/run_batch.py --no-llm        # rules only
 python scripts/run_batch.py --source http://localhost:8080 --submit   # against the organisers' inbox server
-pip install -r requirements-dev.txt && python -m pytest -q   # 53 tests
+pip install -r requirements-dev.txt && python -m pytest -q   # 58 tests
 ```
 
 | Env var | Default | Purpose |

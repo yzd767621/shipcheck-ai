@@ -86,6 +86,9 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .dot{width:8px;height:8px;border-radius:50%;background:var(--text-4);flex:none}
 .dot.on{background:#12b76a;box-shadow:0 0 0 3px rgba(18,183,106,.18)}
 .engine span{color:var(--text-3)}
+.engine .why{display:block;color:var(--text-3);font-size:12px;margin-top:6px;line-height:1.4;word-break:break-word}
+.rv-line{display:flex;gap:6px;align-items:flex-start;margin-top:8px;font-size:12px;color:var(--ok)}
+.rv-line svg.i{width:14px;height:14px;margin-top:1px}.rv-line span{color:var(--text-3)}.rv-line b{color:var(--text-2);font-weight:500}
 .theme-toggle{display:flex;background:var(--surface-3);border-radius:9px;padding:3px;gap:2px}
 .theme-toggle button{flex:1;border:0;background:none;border-radius:7px;padding:5px;cursor:pointer;color:var(--text-3);display:grid;place-items:center}
 .theme-toggle button.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
@@ -504,7 +507,7 @@ function go(view,opts={}){
   $("#v-insights").hidden=view!=="insights";$("#v-activity").hidden=view!=="activity";
   const T={inbox:["Inbox","Every email, classified and checked"],review:["Review queue","Cases the system could not decide on its own"],insights:["Insights","Throughput, discrepancy patterns and time saved"],activity:["Activity","Audit trail of runs, uploads, retries and human decisions"]}[view];
   $("#title").textContent=T[0];$("#crumb").textContent=T[1];
-  if(view==="review")S.tab="review";else if(view==="inbox"&&opts.tab)S.tab=opts.tab;else if(view==="inbox"&&S.tab==="review"&&!opts.keep)S.tab="all";
+  if(view==="review")S.tab=(opts.tab||(S.tab==="reviewed"?"reviewed":"review"));else if(view==="inbox"&&opts.tab)S.tab=opts.tab;else if(view==="inbox"&&S.tab==="review"&&!opts.keep)S.tab="all";
   if(view==="insights")renderInsights();
   if(view==="activity")renderActivity();
   if(view==="inbox"||view==="review"){renderTabs();renderList();if(view==="review"&&!narrow()&&(!S.sel||!visible().some(r=>r.email_id===S.sel))){const f=visible()[0];f?show(f.email_id):emptyDetail()}
@@ -517,14 +520,14 @@ function updateHash(){const h=S.view+(S.sel&&(S.view==="inbox"||S.view==="review
 /* ================================================================ list */
 CATS.forEach(c=>$("#fcat").insertAdjacentHTML("beforeend",`<option value="${c}">${nm(c)}</option>`));
 const statusOf=r=>(r.category==="BL_COMPARISON"||r.status==="ERROR")?r.status:null;
-function inTab(r,t){return t==="all"||(t==="review"&&r.needs_human)||(t==="MISMATCH"&&r.status==="MISMATCH")||(t==="BL_COMPARISON"&&r.category==="BL_COMPARISON")||(t==="other"&&r.category!=="BL_COMPARISON")}
+function inTab(r,t){return t==="all"||(t==="review"&&r.needs_human)||(t==="reviewed"&&r.reviewed&&!r.needs_human)||(t==="MISMATCH"&&r.status==="MISMATCH")||(t==="BL_COMPARISON"&&r.category==="BL_COMPARISON")||(t==="other"&&r.category!=="BL_COMPARISON")}
 function visible(){const q=$("#q").value.toLowerCase().trim(),fc=$("#fcat").value;
   return S.rows.filter(r=>inTab(r,S.tab)&&(!fc||r.category===fc)&&(!q||(r.subject+" "+r.from+" "+r.email_id+" "+(r.defect_fields||[]).join(" ")).toLowerCase().includes(q)))}
 function renderTabs(){
-  const tabs=S.view==="review"?[["review","Open"]]:TABS;
+  const tabs=S.view==="review"?[["review","Open"],["reviewed","Reviewed"]]:TABS;
   $("#tabs").innerHTML=tabs.map(([k,l])=>`<button class="tab ${S.tab===k?"on":""}" data-t="${k}">${l}<span class="n">${S.rows.filter(r=>inTab(r,k)).length}</span></button>`).join("");
   $$(".tab").forEach(b=>b.onclick=()=>{S.tab=b.dataset.t;renderTabs();renderList()})}
-function badgeFor(r){const st=statusOf(r);return st?`<span class="badge b-${st}">${nm(st)}</span>`:`<span class="badge b-cat">${nm(r.category)}</span>`}
+function badgeFor(r){if(r.resolution==="awaiting_sender")return `<span class="badge b-AWAITING_DOCUMENTS">Waiting on sender</span>`;const st=statusOf(r);return st?`<span class="badge b-${st}">${nm(st)}</span>`:`<span class="badge b-cat">${nm(r.category)}</span>`}
 function renderList(){
   const list=visible();
   $("#list").innerHTML=list.map(r=>`<div class="item ${S.sel===r.email_id?"sel":""}" data-id="${esc(r.email_id)}">
@@ -533,8 +536,10 @@ function renderList(){
     <div class="l3">${badgeFor(r)}${statusOf(r)?`<span class="badge b-cat">${nm(r.category)}</span>`:""}
       ${r.review_reason?`<span class="muted" style="font-size:12px">${REASON[r.review_reason]}</span>`:""}
       ${(r.defect_fields||[]).length?`<span class="muted" style="font-size:12px">${r.defect_fields.map(f=>LABEL[f]).join(", ")}</span>`:""}
-      ${r.reviewed?`<span class="badge plain b-cat">${ico("user")}Reviewed</span>`:""}${r.uploaded?`<span class="badge plain b-cat">Uploaded</span>`:""}</div></div>`).join("")
-    ||`<div class="empty"><div class="ico">${ico(S.tab==="review"?"check":"inbox")}</div><b>${S.tab==="review"?"Queue is clear":"No emails match"}</b><span>${S.tab==="review"?"Nothing needs a person right now.":"Try a different filter."}</span></div>`;
+      ${r.reviewed?`<span class="badge plain b-cat">${ico("user")}Reviewed</span>`:""}${r.uploaded?`<span class="badge plain b-cat">Uploaded</span>`:""}</div>
+    ${S.tab==="reviewed"&&r.reviewed_by?`<div class="rv-line">${ico("check")}<span><b>${esc(r.reviewed_by)}</b> · ${esc(ago(r.reviewed_at))}${r.reviewed_from?` · was ${esc(REASON[r.reviewed_from]||r.reviewed_from)}`:""}${r.review_note?` · “${esc(r.review_note)}”`:""}</span></div>`:""}</div>`).join("")
+    ||(S.tab==="reviewed"?`<div class="empty"><div class="ico">${ico("user")}</div><b>No reviewed cases yet</b><span>Cases you confirm in the Open tab are kept here with who reviewed them and when.</span></div>`
+      :`<div class="empty"><div class="ico">${ico(S.tab==="review"?"check":"inbox")}</div><b>${S.tab==="review"?"Queue is clear":"No emails match"}</b><span>${S.tab==="review"?"Nothing needs a person right now.":"Try a different filter."}</span></div>`);
   $$(".item").forEach(el=>el.onclick=()=>show(el.dataset.id));
 }
 $("#q").addEventListener("input",renderList);$("#fcat").addEventListener("input",renderList);
@@ -634,6 +639,7 @@ function reviewCard(r){
     <div class="form-row"><span>Reviewer</span><input class="input" id="rv-who" value="ops.reviewer"></div>
     <div class="form-row"><span>Note</span><input class="input" id="rv-note" placeholder="Optional — e.g. confirmed weight with customer by phone"></div>
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;align-items:center"><button class="btn primary" id="rv-save">${ico("check")}Confirm & recompute</button>
+      ${open&&["wrong_doc_type","missing_attachment","unreadable"].includes(r.review_reason)?`<button class="btn" id="rv-close" title="Keep the finding and take the case out of the queue">${ico("mail")}Close · waiting on sender</button>`:""}
       ${S.view==="review"?`<span class="muted kbd-hint" style="font-size:12.5px"><kbd>Ctrl</kbd> <kbd>Enter</kbd> confirms and opens the next case</span>`:""}</div></div></div>`;
 }
 
@@ -692,6 +698,7 @@ function wireDetail(r){
   $$("tr.cmp").forEach(t=>t.onclick=()=>highlight(t.dataset.f));
   $$("#review input[data-f]").forEach(i=>i.addEventListener("input",()=>i.classList.toggle("changed",i.value!==i.dataset.o)));
   const save=$("#rv-save");if(save)save.onclick=()=>saveReview(false);
+  const cl=$("#rv-close");if(cl)cl.onclick=()=>saveReview(false,"close");
   $("#rv-retry").onclick=async()=>{const b=$("#rv-retry");b.disabled=true;try{await api(`/api/emails/${r.email_id}/retry`,{method:"POST"});toast("Re-processed "+r.email_id,"refresh")}catch(e){toast("Retry failed: "+e.message,"alert")}await load();show(r.email_id)};
   const rp=$("#rv-reply");if(rp)rp.onclick=async()=>{rp.disabled=true;rp.innerHTML=ico("sparkle")+"Drafting…";
     try{const d=await api(`/api/emails/${r.email_id}/draft-reply`,{method:"POST"});
@@ -700,13 +707,13 @@ function wireDetail(r){
     }catch(e){toast("Draft failed: "+e.message,"alert")}rp.disabled=false;rp.innerHTML=ico("sparkle")+"Redraft"};
 }
 
-async function saveReview(next){
+async function saveReview(next,action){
   const r=S.cur;if(!r||!$("#rv-save"))return;
-  const dec={reviewer:($("#rv-who")||{}).value||"reviewer",note:($("#rv-note")||{}).value||"",category:$("#rv-cat").value,si:{},bl:{}};
+  const dec={reviewer:($("#rv-who")||{}).value||"reviewer",note:($("#rv-note")||{}).value||"",category:$("#rv-cat").value,si:{},bl:{},action:action||null};
   $$("#review input[data-f]").forEach(i=>{if(i.value!==i.dataset.o||r.needs_human)dec[i.dataset.side][i.dataset.f]=i.value});
   $("#rv-save").disabled=true;
   try{const res=await api(`/api/emails/${r.email_id}/review`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(dec)});
-    toast(`${r.email_id} → ${nm(statusOf(res)||res.category)}`,res.status==="MISMATCH"?"x":res.status==="NEEDS_REVIEW"?"alert":"check");
+    toast(`${r.email_id} → ${nm(statusOf(res)||res.category)}${res.resolution==="awaiting_sender"?" · waiting on sender":""}${S.view==="review"&&!res.needs_human?" · moved to Reviewed":""}`,res.status==="MISMATCH"?"x":res.status==="NEEDS_REVIEW"?"alert":"check");
     const idx=visible().findIndex(x=>x.email_id===r.email_id);await load();
     if(next||S.view==="review"){const v=visible();const n=v[Math.min(idx,v.length-1)];n?show(n.email_id):emptyDetail()}else show(r.email_id);
   }catch(e){toast("Save failed: "+e.message,"alert");$("#rv-save").disabled=false}
@@ -780,7 +787,16 @@ const COMMANDS=[
   {t:"Export submission.json",x:"",run:()=>location.href="/api/submission"},
   {t:"Show discrepancies",x:"",run:()=>{go("inbox",{tab:"MISMATCH"})}},
   {t:"Toggle dark mode",x:"",run:()=>setTheme(document.documentElement.getAttribute("data-theme")==="dark"?"light":"dark")},
-  {t:"Keyboard shortcuts",x:"?",run:()=>$("#keys").hidden=false}];
+  {t:"Keyboard shortcuts",x:"?",run:()=>$("#keys").hidden=false},
+  {t:"Test AI connection",x:"",run:()=>testAI()},
+  {t:"Show reviewed cases",x:"",run:()=>go("review",{tab:"reviewed"})}];
+async function testAI(){const b=$("#ai-test"),out=$("#ai-res");if(b){b.disabled=true;b.innerHTML=ico("sparkle")+"Testing…"}
+  let d;try{d=await api("/api/ai-check",{method:"POST"})}catch(e){d={ok:false,message:e.message}}
+  if(out){out.hidden=false;out.textContent=(d.ok?"✓ ":"✗ ")+d.message;out.style.color=d.ok?"var(--ok)":"var(--bad)"}
+  toast((d.ok?"AI OK: ":"AI problem: ")+d.message.slice(0,140),d.ok?"check":"alert");
+  if(b){b.disabled=false;b.innerHTML=ico("sparkle")+"Test AI connection"}}
+function ago(iso){if(!iso)return "";const t=(Date.now()-new Date(iso).getTime())/1000;
+  if(t<60)return "just now";if(t<3600)return Math.round(t/60)+" min ago";if(t<86400)return Math.round(t/3600)+" h ago";return new Date(iso).toLocaleString()}
 function openPal(){$("#pal").hidden=false;$("#pal-q").value="";palRender();setTimeout(()=>$("#pal-q").focus(),10)}
 function palRender(){
   const q=$("#pal-q").value.toLowerCase().trim();
@@ -822,7 +838,12 @@ $("#btn-run").onclick=runAll;
 async function poll(){
   try{const s=await api("/api/status");S.llm=s.llm;S.provider=s.provider;
     const ocrTxt=s.ocr?"OCR on":"OCR off";
-    $("#engine").innerHTML=s.llm?`<b><span class="dot on"></span>${esc(s.provider)} connected</b><span>${esc(s.model)} · rules · ${ocrTxt}</span>`:`<b><span class="dot${s.ocr?" on":""}"></span>Rules${s.ocr?" + OCR":""}</b><span>Add GEMINI_API_KEY (free) to enable the AI model</span>`;
+    const sig=JSON.stringify([s.llm,s.provider,s.model,s.llm_reason,s.ocr]);
+    if(sig!==poll.sig){poll.sig=sig;
+      $("#engine").innerHTML=(s.llm?`<b><span class="dot on"></span>${esc(s.provider)} connected</b><span>${esc(s.model)} · rules · ${ocrTxt}</span>`
+        :`<b><span class="dot${s.ocr?" on":""}"></span>Rules${s.ocr?" + OCR":""} · AI off</b><span class="why">${esc(s.llm_reason||"Add GEMINI_API_KEY (free) to enable the AI model")}</span>`)
+        +`<button class="btn sm" id="ai-test" style="margin-top:8px;width:100%;justify-content:center">${ico("sparkle")}Test AI connection</button><div id="ai-res" class="why" hidden></div>`;
+      $("#ai-test").onclick=testAI}
     $("#job").hidden=!s.running;
     if(s.running){$("#jobbar").style.width=(100*s.done/Math.max(1,s.total))+"%";$("#jobtxt").textContent=`Processing ${s.done}/${s.total}`}
     if(s.running||poll.fast){await load();if(!s.running&&poll.fast){if(S.view==="insights")renderInsights();if(S.sel)show(S.sel)}}

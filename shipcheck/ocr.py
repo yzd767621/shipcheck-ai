@@ -51,9 +51,18 @@ def read_pages(pages: list[bytes]) -> dict | None:
     confs: list[float] = []
     for png in pages[:6]:
         img = Image.open(io.BytesIO(png)).convert("L")
+        # One Tesseract pass per page: words with confidences, regrouped into lines
+        # (a second image_to_string pass doubled the time on small cloud CPUs).
         data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
-        confs += [float(c) for c, t in zip(data["conf"], data["text"]) if t.strip() and float(c) >= 0]
-        lines += [l for l in pytesseract.image_to_string(img).splitlines() if l.strip()]
+        rows: dict[tuple, list[str]] = {}
+        for i, word in enumerate(data["text"]):
+            if not word.strip():
+                continue
+            conf = float(data["conf"][i])
+            if conf >= 0:
+                confs.append(conf)
+            rows.setdefault((data["block_num"][i], data["par_num"][i], data["line_num"][i]), []).append(word)
+        lines += [" ".join(ws) for _, ws in sorted(rows.items())]
     if not lines:
         return None
     return {"lines": [_fix(l) for l in lines], "confidence": round(sum(confs) / len(confs) / 100, 2) if confs else 0.0}

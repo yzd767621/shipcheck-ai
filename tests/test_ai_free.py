@@ -124,3 +124,30 @@ def test_gemini_picks_available_model_on_404():
     c = gemini_with(m)
     c.draft_reply({"subject": "s", "from": "f", "status": "OK", "summary": "", "comparison": []})
     assert c.model == "gemini-9.0-flash" and m.calls[-1].model == "gemini-9.0-flash"
+
+
+# ---------------------------------------------------------------- AI status diagnostics
+def _clear(monkeypatch):
+    for k in list(__import__("os").environ):
+        if "GEMINI" in k.upper() or "ANTHROPIC" in k.upper() or k in ("GOOGLE_API_KEY", "SHIPCHECK_LLM", "SHIPCHECK_DISABLE_LLM"):
+            monkeypatch.delenv(k, raising=False)
+
+
+def test_status_explains_missing_key(monkeypatch):
+    _clear(monkeypatch)
+    assert llm.get_client() is None
+    assert "No GEMINI_API_KEY found" in llm.STATUS["reason"]
+
+
+def test_status_spots_mistyped_variable_name(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY ", "abc")        # trailing space in the NAME
+    assert llm.get_client() is None
+    assert "'GEMINI_API_KEY '" in llm.STATUS["reason"] and "abc" not in llm.STATUS["reason"]
+
+
+def test_key_value_whitespace_and_quotes_are_tolerated(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", '  "AIza-test-key"  ')
+    c = llm.get_client()
+    assert isinstance(c, llm.GeminiClient) and llm.STATUS["reason"] is None

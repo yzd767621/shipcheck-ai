@@ -118,7 +118,33 @@ def status():
 def _engine() -> dict:
     ai = pipeline.ai
     return {"llm": bool(ai), "provider": ai.label if ai else None, "model": ai.model if ai else None,
-            "ocr": ocr.available()}
+            "llm_reason": llm.STATUS.get("reason"), "ocr": ocr.available()}
+
+
+@app.post("/api/ai-check")
+def ai_check():
+    """Make one tiny real call to the AI model and report exactly what happened."""
+    ai = pipeline.ai
+    if not ai:
+        return {"ok": False, "provider": None, "message": llm.STATUS.get("reason") or "AI model not configured."}
+    sample = {"from": "ops@example.com", "subject": "Quick check",
+              "body": "Hi, please check the draft BL against the SI and revert with any discrepancy.", "attachments": []}
+    try:
+        res = ai.classify(sample)
+        return {"ok": True, "provider": ai.label, "model": ai.model,
+                "message": f"{ai.label} answered: {res.category} ({res.confidence:.0%}) — {res.rationale}"}
+    except Exception as exc:
+        msg = str(exc)
+        hint = ""
+        low = msg.lower()
+        if "api key not valid" in low or "api_key_invalid" in low or "permission" in low or "401" in msg or "403" in msg:
+            hint = " The key was rejected: copy it again from aistudio.google.com/apikey and update GEMINI_API_KEY."
+        elif "429" in msg or "quota" in low or "resource_exhausted" in low:
+            hint = " Free-tier limit reached; wait a minute and try again."
+        elif "404" in msg or "not found" in low:
+            hint = " Model not available for this key; set GEMINI_MODEL to a model listed in AI Studio."
+        return {"ok": False, "provider": ai.label, "model": ai.model,
+                "message": f"{type(exc).__name__}: {msg[:300]}{hint}"}
 
 
 @app.post("/api/run")
@@ -132,8 +158,16 @@ def run(body: dict | None = None):
 
 def _slim(r: dict) -> dict:
     keys = ("email_id", "from", "subject", "category", "category_confidence", "category_engine", "status",
-            "review_reason", "defect_fields", "summary", "needs_human", "reviewed", "uploaded", "attachments")
-    return {k: r.get(k) for k in keys}
+            "review_reason", "defect_fields", "summary", "needs_human", "reviewed", "uploaded", "attachments",
+            "resolution")
+    out = {k: r.get(k) for k in keys}
+    human = [h for h in r.get("history") or [] if h.get("by") != "system"]
+    if human:
+        last = human[-1]
+        out.update(reviewed_by=last.get("by"), reviewed_at=last.get("at"),
+                   reviewed_from=(last.get("previous") or {}).get("review_reason"),
+                   review_note=(last.get("decision") or {}).get("note") or None)
+    return out
 
 
 @app.get("/api/emails")
@@ -170,6 +204,7 @@ class Review(BaseModel):
     status: str | None = None
     si: dict[str, str] = {}
     bl: dict[str, str] = {}
+    action: str | None = None        # "close" = keep the finding, wait for the sender
 
 
 @app.post("/api/emails/{email_id}/review")

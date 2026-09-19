@@ -316,6 +316,15 @@ def apply_human_review(result: dict, decision: dict) -> dict:
                  "previous": {k: r.get(k) for k in ("category", "status", "review_reason", "defect_fields")}})
     r["history"] = hist
 
+    if decision.get("action") == "close":
+        # Nothing to correct (wrong / missing / unreadable document): the reviewer has
+        # asked the sender for new documents. The finding stays, the case leaves the queue.
+        r.update(needs_human=False, reviewed=True, resolution="awaiting_sender")
+        if decision.get("note"):
+            r["review_note"] = decision["note"]
+        return r
+    r.pop("resolution", None)
+
     if decision.get("category"):
         r["category"] = decision["category"]
         r["category_engine"] = "human"
