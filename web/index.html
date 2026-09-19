@@ -292,6 +292,41 @@ details.raw pre{white-space:pre-wrap;font:12px/1.55 var(--mono);color:var(--text
 .kbd-help td{padding:6px 10px;border:0;font-size:13px}
 
 /* ---------------------------------------------------------------- responsive */
+.back{display:none}
+.rv-sub{display:none;float:right;font:500 11px var(--font);color:var(--text-4);letter-spacing:.02em}
+.back svg.i{transform:rotate(90deg)}
+@media (hover:none){kbd,.kbd-hint{display:none!important}}
+@media (max-width:640px){
+  .side{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:40;justify-content:space-around;gap:0;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--border);border-bottom:0!important;box-shadow:0 -4px 16px rgba(16,24,40,.06)}
+  .side .logo,.side .side-foot{display:none!important}
+  .nav{flex:1;flex-direction:column;gap:2px;padding:6px 2px;font-size:11px;justify-content:center;position:relative;text-align:center}
+  .nav svg.i{width:20px;height:20px}
+  .nav .count{position:absolute;top:0;left:calc(50% + 6px);margin:0;font-size:10px;line-height:16px;padding:0 5px}
+  .nav[data-view="inbox"] .count{display:none}
+  .main{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+  .top .crumb{display:none}
+  .top h1{font-size:17px}
+  .btn-label{display:none}
+  .d-head{flex-direction:column;gap:10px}
+  .d-head h2{font-size:16px}
+  .d-actions{margin-left:0}
+  .d-meta{gap:4px 12px;font-size:12.5px}
+  .card-h{flex-wrap:wrap;row-gap:6px}.card-h .r{margin-left:0;flex-wrap:wrap}
+  .rv-sub{display:inline!important}
+  .rv-grid .h{display:none!important}
+  .cmp-table thead{display:none}
+  .cmp-table tr.cmp{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;padding:12px 16px;border-bottom:1px solid var(--border)}
+  .cmp-table tbody tr:last-child{border-bottom:0}
+  .cmp-table td{display:block;padding:0;border:0!important;box-shadow:none!important;max-width:none}
+  .cmp-table td:first-child,.cmp-table td:last-child{grid-column:1/-1}
+  .cmp-table td.val::before{content:attr(data-l);display:block;font:600 10.5px var(--font);color:var(--text-4);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+  .cmp-table tr.cmp.mismatch{box-shadow:inset 3px 0 0 var(--bad);background:var(--bad-soft)}
+  .cmp-table tr.cmp.missing{box-shadow:inset 3px 0 0 var(--warn);background:var(--warn-soft)}
+  .cmp-table tr.cmp.mismatch td{background:none}
+  .kgrid{grid-template-columns:1fr 1fr}.stat.hero{grid-column:1/-1}.stat .val{font-size:24px}.stat.hero .val{font-size:40px}
+  .cgrid{grid-template-columns:1fr}
+  .toasts{bottom:84px;left:16px;right:16px}
+}
 @media (max-width:1000px){
   .app{grid-template-columns:minmax(0,1fr)}
   .side{flex-direction:row;align-items:center;overflow-x:auto;padding:8px 12px;border-right:0;border-bottom:1px solid var(--border);scrollbar-width:none}
@@ -302,10 +337,15 @@ details.raw pre{white-space:pre-wrap;font:12px/1.55 var(--mono);color:var(--text
   .app{height:auto;min-height:100vh}.page.split{grid-template-columns:minmax(0,1fr);overflow:visible}
   .main,.detail,.listcol{min-width:0}.list-tools select.input{flex:none;max-width:40%}
   .search{flex:1 1 100%;order:3}.top>div:first-child{flex:1}
-  .listcol{max-height:60vh;border-right:0;border-bottom:1px solid var(--border)}
+  .listcol{border-right:0}
+  .page.split.has-sel .listcol{display:none}
+  .page.split:not(.has-sel) .detail{display:none}
+  .back{display:inline-flex!important}
   .search{min-width:0;margin-left:0}
   .detail{padding:18px 16px 60px}.wrap{padding:18px 16px 60px}.top{padding:12px 16px}
-  .rv-grid{grid-template-columns:1fr}.rv-grid .h{display:none}.form-row{grid-template-columns:1fr}
+  .rv-grid{grid-template-columns:1fr 1fr}.rv-grid .h:first-child{display:none}
+  .rv-grid>span:not(.h){grid-column:1/-1;margin-top:8px;font-weight:500;font-size:13px}
+  .form-row{grid-template-columns:1fr}
   .hbar{grid-template-columns:110px 1fr}
 }
 </style>
@@ -359,9 +399,9 @@ details.raw pre{white-space:pre-wrap;font:12px/1.55 var(--mono);color:var(--text
       <div><h1 id="title">Inbox</h1><div class="crumb" id="crumb"></div></div>
       <div class="progress" id="job" hidden><div class="track"><i id="jobbar" style="width:0"></i></div><span id="jobtxt"></span></div>
       <div class="search" id="open-pal"><svg class="i"><use href="#i-search"/></svg><span>Search emails or run a command…</span><kbd>Ctrl K</kbd></div>
-      <button class="btn primary" id="btn-new"><svg class="i"><use href="#i-plus"/></svg>New email</button>
+      <button class="btn primary" id="btn-new"><svg class="i"><use href="#i-plus"/></svg><span class="btn-label">New email</span></button>
       <div class="menu">
-        <button class="btn" id="btn-more"><svg class="i"><use href="#i-download"/></svg>Export<svg class="i"><use href="#i-chevron"/></svg></button>
+        <button class="btn" id="btn-more" aria-label="Export"><svg class="i"><use href="#i-download"/></svg><span class="btn-label">Export</span><svg class="i"><use href="#i-chevron"/></svg></button>
         <div class="menu-pop" id="more" hidden>
           <a href="/api/export/discrepancies.csv"><svg class="i"><use href="#i-file"/></svg><div>Discrepancies (CSV)<small>Every flagged field, SI vs BL</small></div></a>
           <a href="/api/submission" download><svg class="i"><use href="#i-download"/></svg><div>submission.json<small>Self-evaluation format</small></div></a>
@@ -467,7 +507,8 @@ function go(view,opts={}){
   if(view==="review")S.tab="review";else if(view==="inbox"&&opts.tab)S.tab=opts.tab;else if(view==="inbox"&&S.tab==="review"&&!opts.keep)S.tab="all";
   if(view==="insights")renderInsights();
   if(view==="activity")renderActivity();
-  if(view==="inbox"||view==="review"){renderTabs();renderList();if(view==="review"&&(!S.sel||!visible().some(r=>r.email_id===S.sel))){const f=visible()[0];f?show(f.email_id):emptyDetail()}}
+  if(view==="inbox"||view==="review"){renderTabs();renderList();if(view==="review"&&!narrow()&&(!S.sel||!visible().some(r=>r.email_id===S.sel))){const f=visible()[0];f?show(f.email_id):emptyDetail()}
+    if(narrow()&&!opts.keepSel){$("#v-list").classList.remove("has-sel")}}
   updateHash();
 }
 $$(".nav").forEach(n=>n.onclick=()=>go(n.dataset.view));
@@ -506,7 +547,7 @@ async function load(){
 }
 
 /* ================================================================ detail */
-function emptyDetail(){$("#detail").innerHTML=`<div class="empty" style="height:100%"><div class="ico">${ico("mail")}</div><b>Select an email</b><span>See how it was classified, what was extracted and why.</span><span style="margin-top:6px"><kbd>J</kbd> <kbd>K</kbd> to move · <kbd>?</kbd> for shortcuts</span></div>`}
+function emptyDetail(){$("#v-list").classList.remove("has-sel");$("#detail").innerHTML=`<div class="empty" style="height:100%"><div class="ico">${ico("mail")}</div><b>Select an email</b><span>See how it was classified, what was extracted and why.</span><span class="kbd-hint" style="margin-top:6px"><kbd>J</kbd> <kbd>K</kbd> to move · <kbd>?</kbd> for shortcuts</span></div>`}
 
 function stepper(r){
   const bl=r.category==="BL_COMPARISON",st=r.status;
@@ -543,11 +584,11 @@ function comparisonCard(r){
     const cls=c.status==="mismatch"?"mismatch":c.status.startsWith("missing")?"missing":"";
     const res=c.status==="match"?`<span class="res ok">${ico("check")}Match</span>`:c.status==="mismatch"?`<span class="res bad">${ico("x")}Mismatch</span>`:`<span class="res warn">${ico("alert")}${c.status==="missing_si"?"Blank in SI":"Blank in BL"}</span>`;
     return `<tr class="cmp ${cls} ${S.field===c.field?"sel":""}" data-f="${c.field}" title="Show evidence (${i+1})"><td><b style="font-weight:500">${esc(c.label)}</b></td>
-      <td class="val">${val(c.si_raw)}${lab(si,c.field)}</td><td class="val">${val(c.bl_raw)}${lab(bl,c.field)}</td>
+      <td class="val" data-l="Shipping Instruction">${val(c.si_raw)}${lab(si,c.field)}</td><td class="val" data-l="Draft BL">${val(c.bl_raw)}${lab(bl,c.field)}</td>
       <td>${res}${c.note?`<span class="note">${esc(c.note)}</span>`:""}</td></tr>`}).join("");
   const pre=r.preliminary?`<div class="callout" style="margin:12px 18px 0">${ico("alert")}<div><b>Preliminary.</b> These values come from reading scanned pages, so the result is not final. Confirm or correct them in the review form below.</div></div>`:"";
   return `<div class="card"><div class="card-h"><h3>SI vs draft BL${r.preliminary?" · from scans":""}</h3><span class="sub">SI is the reference · click a row to see the source evidence</span></div>${pre}
-    <div class="tbl-wrap"><table><thead><tr><th style="width:150px">Field</th><th>Shipping Instruction</th><th>Draft Bill of Lading</th><th style="width:170px">Result</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="tbl-wrap"><table class="cmp-table"><thead><tr><th style="width:150px">Field</th><th>Shipping Instruction</th><th>Draft Bill of Lading</th><th style="width:170px">Result</th></tr></thead><tbody>${rows}</tbody></table></div>
     ${(r.notes||[]).length?`<div class="card-b" style="border-top:1px solid var(--border)">${r.notes.map(n=>`<div class="note">${ico("alert")} ${esc(n)}</div>`).join("")}</div>`:""}</div>`;
 }
 
@@ -584,7 +625,7 @@ function reviewCard(r){
     <div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" id="rv-save">${ico("check")}Save</button></div></div></div>`;
   const inputs=FIELDS.map(f=>{const c=cmp[f]||{};
     const v1=first(c.si_raw||docVal("SI",f)||(aiSI&&aiSI.fields[f])||""),v2=first(c.bl_raw||docVal("BL",f)||(aiBL&&aiBL.fields[f])||"");
-    return `<span>${LABEL[f]}</span><input class="input mono" data-side="si" data-f="${f}" data-o="${esc(v1)}" value="${esc(v1)}" placeholder="—"><input class="input mono" data-side="bl" data-f="${f}" data-o="${esc(v2)}" value="${esc(v2)}" placeholder="—">`}).join("");
+    return `<span>${LABEL[f]}<em class="rv-sub">SI&nbsp;&nbsp;·&nbsp;&nbsp;Draft BL</em></span><input class="input mono" data-side="si" data-f="${f}" data-o="${esc(v1)}" value="${esc(v1)}" placeholder="—"><input class="input mono" data-side="bl" data-f="${f}" data-o="${esc(v2)}" value="${esc(v2)}" placeholder="—">`}).join("");
   const open=r.needs_human;
   return `<div class="card" id="review"><div class="card-h"><h3>${open?"Resolve this case":"Human review"}</h3><span class="sub">${open?"Confirm or correct the values — the result is recomputed instantly":"Override values if needed; every change is audited"}</span></div><div class="card-b">
     ${scans.length?`<div class="callout">${ico("sparkle")}<div>Pre-filled from the scan reading (${esc([...new Set(scans.map(s=>s.engine))].join(", "))}). Check each value against the original before confirming — OCR can misread characters.</div></div>`:""}
@@ -593,7 +634,7 @@ function reviewCard(r){
     <div class="form-row"><span>Reviewer</span><input class="input" id="rv-who" value="ops.reviewer"></div>
     <div class="form-row"><span>Note</span><input class="input" id="rv-note" placeholder="Optional — e.g. confirmed weight with customer by phone"></div>
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;align-items:center"><button class="btn primary" id="rv-save">${ico("check")}Confirm & recompute</button>
-      ${S.view==="review"?`<span class="muted" style="font-size:12.5px"><kbd>Ctrl</kbd> <kbd>Enter</kbd> confirms and opens the next case</span>`:""}</div></div></div>`;
+      ${S.view==="review"?`<span class="muted kbd-hint" style="font-size:12.5px"><kbd>Ctrl</kbd> <kbd>Enter</kbd> confirms and opens the next case</span>`:""}</div></div></div>`;
 }
 
 function replyCard(r){
@@ -611,13 +652,17 @@ function classCard(r){
     ${r.category_rationale?`<p class="hint" style="margin:10px 0 0">${esc(r.category_rationale)}</p>`:""}</div></div>`;
 }
 
+const narrow=()=>matchMedia("(max-width:1000px)").matches;
+function closeDetail(){S.sel=null;S.cur=null;$("#v-list").classList.remove("has-sel");renderList();updateHash();document.querySelector(".page.split").scrollTop=0;window.scrollTo(0,0)}
 async function show(id){
   S.sel=id;S.field=null;renderList();updateHash();
+  $("#v-list").classList.add("has-sel");if(narrow())window.scrollTo(0,0);
   const el=$(`.item[data-id="${CSS.escape(id)}"]`);if(el)el.scrollIntoView({block:"nearest"});
   let r;try{r=await api("/api/emails/"+encodeURIComponent(id))}catch(e){emptyDetail();return}
   if(S.sel!==id)return;S.cur=r;
   const bl=r.category==="BL_COMPARISON";
   $("#detail").innerHTML=`
+    <button class="btn sm ghost back" id="d-back" style="margin:-6px 0 10px -8px">${ico("chevron","i")} Back to ${S.view==="review"?"review queue":"inbox"}</button>
     <div class="d-head"><div style="min-width:0;flex:1"><h2>${esc(r.subject||"(no subject)")}</h2>
       <div class="d-meta"><span>${ico("mail")}${esc(r.from)}</span><span>${esc(r.email_id)}</span><span>${ico("clock")}${esc((r.processed_at||"").replace("T"," ").replace("+00:00"," UTC"))}</span></div></div>
       <div class="d-actions">${bl?`<a class="btn sm" href="/report/${encodeURIComponent(r.email_id)}" target="_blank">${ico("printer")}Report</a>`:""}<button class="btn sm" id="rv-retry">${ico("refresh")}Retry</button></div></div>
@@ -625,6 +670,7 @@ async function show(id){
     <div class="card"><div class="card-h"><h3>Original email</h3></div><div class="card-b"><details class="raw" ${bl?"":"open"}><summary>Show message body</summary><pre>${esc(r.body)}</pre></details></div></div>
     ${(r.history||[]).length?`<div class="card"><div class="card-h"><h3>History</h3></div><div class="card-b">${r.history.slice().reverse().map(h=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><b style="font-weight:500">${esc(h.by)}</b> <span class="muted">${esc(h.at)}</span><br><span class="muted">${esc(h.decision&&h.decision.action?h.decision.action:describeDecision(h))}</span></div>`).join("")}</div></div>`:""}`;
   $("#detail").scrollTop=0;wireDetail(r);
+  const bk=$("#d-back");if(bk)bk.onclick=closeDetail;
 }
 function describeDecision(h){const d=h.decision||{},p=h.previous||{},bits=[];
   if(d.category&&d.category!==p.category)bits.push(`category ${nm(p.category)} → ${nm(d.category)}`);
@@ -802,6 +848,10 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="r"&&$("#rv-retry"))$("#rv-retry").click();
   else if(e.key==="p"&&S.cur&&S.cur.category==="BL_COMPARISON")window.open("/report/"+encodeURIComponent(S.cur.email_id));
 });
+
+window.addEventListener("hashchange",()=>{const [v,id]=decodeURIComponent(location.hash.slice(1)).split("/");
+  if(["inbox","review","insights","activity"].includes(v)&&v!==S.view)go(v,{keep:true});
+  if(id&&id!==S.sel)show(id);else if(!id&&S.sel&&narrow())closeDetail()});
 
 /* ================================================================ boot */
 (async()=>{
