@@ -1,0 +1,12 @@
+BILL OF LADING (DRAFT)
+========================================
+
+Shipper: APRIL FAR EAST (M) SDN BHD
+  TOWER 2, AVENUE 5, LEVEL 6; BANGSAR SOUTH CITY; 59200 KUALA LUMPUR, MALAYSIA
+Consignee: KTP CO., LTD
+  KTP BLDG., 36 SANGWON-GIL; SEONGDONG-GU, SEOUL, SOUTH KOREA
+Notify Party: SAME AS CONSIGNEE
+Port of Loading: SINGAPORE (SGSIN)
+Port of Discharge: BUSAN, SOUTH KOREA (KRPUS)
+No. of Containers: 4 x 40'HC
+Gross Weight (KG): 88,420 KG

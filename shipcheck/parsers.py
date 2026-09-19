@@ -44,6 +44,8 @@ def parse_attachment(path: str, data: bytes) -> ParsedDoc:
             doc = _parse_docx(path, data)
         elif fmt in ("xlsx", "xlsm"):
             doc = _parse_xlsx(path, data)
+        elif fmt in ("png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"):
+            doc = _parse_image(path, data)
         else:
             return ParsedDoc(path, fmt, readable=False, issue="unsupported")
     except Exception as exc:  # corrupt / truncated / password-protected file
@@ -83,7 +85,7 @@ def _parse_pdf_unlocked(path: str, data: bytes) -> ParsedDoc:
                 has_images = True
                 try:
                     buf = io.BytesIO()
-                    page.to_image(resolution=200).original.save(buf, format="PNG")
+                    page.to_image(resolution=300).original.convert("L").save(buf, format="PNG")
                     images.append(buf.getvalue())
                 except Exception:
                     pass  # still an image-only page; just no preview for the vision model
@@ -133,6 +135,15 @@ def _join_chars(chars: list[dict]) -> str:
         s += c["text"]
         prev = c
     return s.strip()
+
+
+def _parse_image(path: str, data: bytes) -> ParsedDoc:
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(data))
+    buf = io.BytesIO()
+    img.convert("L").save(buf, format="PNG")
+    return ParsedDoc(path, "image", readable=False, issue="image_only", image_pages=[buf.getvalue()])
 
 
 def _parse_docx(path: str, data: bytes) -> ParsedDoc:

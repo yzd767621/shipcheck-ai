@@ -515,7 +515,7 @@ function stepper(r){
            ["Classified",`${nm(r.category)} · ${Math.round((r.category_confidence||0)*100)}%`,"done"]];
   if(bl){
     s.push(["Extracted",docsOk?"SI + draft BL read":st==="AWAITING_DOCUMENTS"?"waiting for documents":REASON[r.review_reason]||"—",docsOk?"done":st==="AWAITING_DOCUMENTS"?"":"warn"]);
-    s.push(["Compared",r.comparison&&r.comparison.length?`7 fields · ${(r.defect_fields||[]).length} differ`:"—",r.comparison&&r.comparison.length?(st==="MISMATCH"?"bad":st==="NEEDS_REVIEW"?"warn":"done"):""]);
+    s.push(["Compared",r.comparison&&r.comparison.length?(r.preliminary?`from scans · ${(r.preliminary_defects||[]).length} suggested`:`7 fields · ${(r.defect_fields||[]).length} differ`):"—",r.comparison&&r.comparison.length?(st==="MISMATCH"?"bad":st==="NEEDS_REVIEW"?"warn":"done"):""]);
   }
   s.push([r.reviewed?"Human-confirmed":"Result",nm(statusOf(r)||r.category),st==="MISMATCH"?"bad":st==="NEEDS_REVIEW"||st==="ERROR"?"warn":st==="AWAITING_DOCUMENTS"?"":"done"]);
   return `<div class="card"><div class="steps">`+s.map(([t,sub,c],i)=>`${i?`<div class="bar-sep ${c==="done"||c==="bad"||c==="warn"?"done":""}"></div>`:""}<div class="step ${c}"><div class="c">${c==="done"?ico("check"):c==="bad"?ico("x"):c==="warn"?"!":i+1}</div><div>${t}<small>${esc(sub)}</small></div></div>`).join("")+`</div></div>`;
@@ -538,14 +538,15 @@ function comparisonCard(r){
   if(!(r.comparison||[]).length)return "";
   const si=(r.documents||[]).find(d=>d.role==="SI")||{fields:{}},bl=(r.documents||[]).find(d=>d.role==="BL")||{fields:{}};
   const val=v=>{if(!v)return "—";const [h,...t]=String(v).split("\n");return esc(h)+(t.length?`<span class="addr">${esc(t.join("\n"))}</span>`:"")};
-  const lab=(d,f)=>{const x=d.fields&&d.fields[f];return x?`<span class="lab">“${esc(x.label)}”${x.method&&x.method!=="lexicon"?`<em>${x.method==="llm"?"found by Claude":esc(x.method)}</em>`:""}</span>`:""};
+  const lab=(d,f)=>{const x=d.fields&&d.fields[f];return x?`<span class="lab">“${esc(x.label)}”${x.method&&x.method!=="lexicon"?`<em>${x.method==="llm"?"found by "+esc(S.provider||"AI"):esc(x.method)}</em>`:""}</span>`:""};
   const rows=r.comparison.map((c,i)=>{
     const cls=c.status==="mismatch"?"mismatch":c.status.startsWith("missing")?"missing":"";
     const res=c.status==="match"?`<span class="res ok">${ico("check")}Match</span>`:c.status==="mismatch"?`<span class="res bad">${ico("x")}Mismatch</span>`:`<span class="res warn">${ico("alert")}${c.status==="missing_si"?"Blank in SI":"Blank in BL"}</span>`;
     return `<tr class="cmp ${cls} ${S.field===c.field?"sel":""}" data-f="${c.field}" title="Show evidence (${i+1})"><td><b style="font-weight:500">${esc(c.label)}</b></td>
       <td class="val">${val(c.si_raw)}${lab(si,c.field)}</td><td class="val">${val(c.bl_raw)}${lab(bl,c.field)}</td>
       <td>${res}${c.note?`<span class="note">${esc(c.note)}</span>`:""}</td></tr>`}).join("");
-  return `<div class="card"><div class="card-h"><h3>SI vs draft BL</h3><span class="sub">SI is the reference · click a row to see the source evidence</span></div>
+  const pre=r.preliminary?`<div class="callout" style="margin:12px 18px 0">${ico("alert")}<div><b>Preliminary.</b> These values come from reading scanned pages, so the result is not final. Confirm or correct them in the review form below.</div></div>`:"";
+  return `<div class="card"><div class="card-h"><h3>SI vs draft BL${r.preliminary?" · from scans":""}</h3><span class="sub">SI is the reference · click a row to see the source evidence</span></div>${pre}
     <div class="tbl-wrap"><table><thead><tr><th style="width:150px">Field</th><th>Shipping Instruction</th><th>Draft Bill of Lading</th><th style="width:170px">Result</th></tr></thead><tbody>${rows}</tbody></table></div>
     ${(r.notes||[]).length?`<div class="card-b" style="border-top:1px solid var(--border)">${r.notes.map(n=>`<div class="note">${ico("alert")} ${esc(n)}</div>`).join("")}</div>`:""}</div>`;
 }
@@ -557,9 +558,13 @@ function docsCard(r){
     const lines=(d.text||"").split("\n");
     let body;
     if(d.readable)body=`<div class="lines" id="doc-${di}">${lines.map((l,i)=>`<div class="ln ${ev.has(l.trim())?"ev":""}" data-l="${esc(l.trim())}">${esc(l)||" "}</div>`).join("")}</div>`;
-    else if(d.ai_read&&d.ai_read.fields)body=`<div class="ai-read"><div class="callout">${ico("sparkle")}<div>Claude pre-read this scan as <b>${esc(nm(d.ai_read.doc_type))}</b> · legibility ${Math.round((d.ai_read.legibility||0)*100)}%. Values are suggestions pre-filled in the review form.</div></div>
-      <table>${FIELDS.map(f=>`<tr><td class="muted">${LABEL[f]}</td><td class="mono">${esc(d.ai_read.fields[f]||"—")}</td></tr>`).join("")}</table></div>`;
-    else body=`<div class="empty" style="padding:28px">${ico("alert")}<b>Cannot read this file</b><span>${esc(d.issue||"")}${d.ai_read&&d.ai_read.error?" · AI read failed: "+esc(d.ai_read.error):""}</span></div>`;
+    else if(d.pre_read&&d.pre_read.fields&&Object.keys(d.pre_read.fields).length){const pr=d.pre_read;
+      const q=[pr.ocr_confidence!=null?`OCR confidence ${Math.round(pr.ocr_confidence*100)}%`:"",pr.legibility!=null?`legibility ${Math.round(pr.legibility*100)}%`:""].filter(Boolean).join(" · ");
+      body=`<div class="ai-read"><div class="callout">${ico("sparkle")}<div><b>${esc(pr.engine)}</b> read this scan as <b>${esc(nm(pr.doc_type)||"unknown type")}</b>${q?" · "+q:""}. Suggestions only; a person confirms them in the review form.</div></div>
+      <table>${FIELDS.map(f=>`<tr><td class="muted">${LABEL[f]}</td><td class="mono">${esc(pr.fields[f]||"—")}</td><td class="muted" style="font-size:11.5px">${esc((pr.sources||{})[f]||"")}</td></tr>`).join("")}</table>
+      ${pr.ai_error?`<div class="note" style="margin-top:8px">${ico("alert")} AI vision unavailable: ${esc(pr.ai_error)}</div>`:""}
+      ${pr.ocr_text?`<details class="raw" style="margin-top:10px"><summary>Raw OCR text</summary><pre>${esc(pr.ocr_text)}</pre></details>`:""}</div>`}
+    else body=`<div class="empty" style="padding:28px">${ico("alert")}<b>Cannot read this file</b><span>${esc(d.issue||"")}${d.pre_read&&d.pre_read.ai_error?" · AI read failed: "+esc(d.pre_read.ai_error):""}</span></div>`;
     return `<div class="doc"><div class="doc-h">${ico("file")}<b title="${esc(d.path)}">${esc(d.path.split("/").pop())}</b>
       <span class="badge b-cat">${esc(d.doc_type?nm(d.doc_type):"Unknown type")}</span>${d.readable?"":`<span class="badge b-NEEDS_REVIEW">${esc(d.issue)}</span>`}
       <a href="/api/attachments/${encodeURI(d.path)}" target="_blank">Open ↗</a></div>${body}</div>`}).join("");
@@ -569,7 +574,7 @@ function docsCard(r){
 function reviewCard(r){
   const bl=r.category==="BL_COMPARISON";
   const cmp=Object.fromEntries((r.comparison||[]).map(c=>[c.field,c]));
-  const scans=(r.documents||[]).map(d=>d.ai_read).filter(a=>a&&a.fields);
+  const scans=(r.documents||[]).map(d=>d.pre_read).filter(a=>a&&a.fields&&Object.keys(a.fields).length);
   const aiSI=scans.find(a=>a.doc_type==="SI"),aiBL=scans.find(a=>a.doc_type==="BL");
   const docVal=(role,f)=>{const d=(r.documents||[]).find(x=>x.role===role);return d&&d.fields&&d.fields[f]?d.fields[f].value:""};
   const catSel=`<select class="input" id="rv-cat" style="width:100%">${CATS.map(c=>`<option ${c===r.category?"selected":""} value="${c}">${nm(c)}</option>`).join("")}</select>`;
@@ -582,7 +587,7 @@ function reviewCard(r){
     return `<span>${LABEL[f]}</span><input class="input mono" data-side="si" data-f="${f}" data-o="${esc(v1)}" value="${esc(v1)}" placeholder="—"><input class="input mono" data-side="bl" data-f="${f}" data-o="${esc(v2)}" value="${esc(v2)}" placeholder="—">`}).join("");
   const open=r.needs_human;
   return `<div class="card" id="review"><div class="card-h"><h3>${open?"Resolve this case":"Human review"}</h3><span class="sub">${open?"Confirm or correct the values — the result is recomputed instantly":"Override values if needed; every change is audited"}</span></div><div class="card-b">
-    ${scans.length?`<div class="callout">${ico("sparkle")}<div>Pre-filled from Claude's reading of the scanned pages. Verify against the original before confirming.</div></div>`:""}
+    ${scans.length?`<div class="callout">${ico("sparkle")}<div>Pre-filled from the scan reading (${esc([...new Set(scans.map(s=>s.engine))].join(", "))}). Check each value against the original before confirming — OCR can misread characters.</div></div>`:""}
     <div class="rv-grid"><span class="h">Field</span><span class="h">Shipping Instruction</span><span class="h">Draft BL</span>${inputs}</div>
     <div class="form-row"><span>Category</span>${catSel}</div>
     <div class="form-row"><span>Reviewer</span><input class="input" id="rv-who" value="ops.reviewer"></div>
@@ -593,7 +598,7 @@ function reviewCard(r){
 
 function replyCard(r){
   if(r.category!=="BL_COMPARISON"||!["MISMATCH","NEEDS_REVIEW","OK"].includes(r.status))return "";
-  return `<div class="card"><div class="card-h"><h3>Reply to sender</h3><span class="sub">${S.llm?"Drafted by Claude from the verified findings":"Template draft (add an API key for Claude drafting)"}</span>
+  return `<div class="card"><div class="card-h"><h3>Reply to sender</h3><span class="sub">${S.llm?"Drafted by "+esc(S.provider)+" from the verified findings":"Template draft (add a free Gemini key for AI drafting)"}</span>
     <div class="r"><button class="btn sm" id="rv-reply">${ico("sparkle")}Draft reply</button></div></div><div class="card-b" id="reply-b"><span class="muted" style="font-size:13px">Generate an amendment request or confirmation email for ${esc(r.from)}.</span></div></div>`;
 }
 
@@ -601,7 +606,7 @@ function classCard(r){
   const sig=(r.category_signals||[]).map(s=>s.replace(/^[A-Z_]+: /,""));
   const c=Math.round((r.category_confidence||0)*100);
   return `<div class="card"><div class="card-h"><h3>Why this classification</h3><span class="badge b-cat">${nm(r.category)}</span>
-    <div class="r"><div class="conf"><div class="track"><i style="width:${c}%"></i></div><span style="font-size:12.5px;font-weight:500">${c}%</span></div><span class="badge plain b-cat">${r.category_engine==="claude"?ico("sparkle")+"Claude":r.category_engine==="human"?ico("user")+"Human":"Rules"}</span></div></div>
+    <div class="r"><div class="conf"><div class="track"><i style="width:${c}%"></i></div><span style="font-size:12.5px;font-weight:500">${c}%</span></div><span class="badge plain b-cat">${(r.category_engine==="claude"||r.category_engine==="gemini")?ico("sparkle")+(r.category_engine==="gemini"?"Gemini":"Claude"):r.category_engine==="human"?ico("user")+"Human":"Rules"}</span></div></div>
     <div class="card-b"><div class="chips">${sig.map(s=>`<span class="sig">${esc(s)}</span>`).join("")||`<span class="muted">No signals recorded.</span>`}</div>
     ${r.category_rationale?`<p class="hint" style="margin:10px 0 0">${esc(r.category_rationale)}</p>`:""}</div></div>`;
 }
@@ -689,7 +694,7 @@ async function renderInsights(){
      <div class="card"><div class="card-h"><h3>Discrepancies by field</h3><span class="sub">Where draft BLs go wrong</span></div>${hbars(d.defect_fields,FIELDS,LABEL)}</div>
      <div class="card"><div class="card-h"><h3>Inbox mix</h3><span class="sub">Emails by category</span></div>${hbars(d.categories,CATS)}</div>
      <div class="card"><div class="card-h"><h3>Why cases went to a person</h3><span class="sub">Open review reasons</span></div>${hbars(d.review_reasons,Object.keys(REASON),REASON)}</div>
-     <div class="card"><div class="card-h"><h3>Classification confidence</h3><span class="sub">Below 75% is decided by Claude</span></div>${hbars(d.confidence,["≥ 90%","75–89%","50–74%","< 50%"],null,{keepZero:true})}</div>
+     <div class="card"><div class="card-h"><h3>Classification confidence</h3><span class="sub">Below 75% is decided by the AI model</span></div>${hbars(d.confidence,["≥ 90%","75–89%","50–74%","< 50%"],null,{keepZero:true})}</div>
    </div>
    <div class="card" style="margin-top:16px"><div class="card-h"><h3>Sender hotspots</h3><span class="sub">Which counterparties send draft BLs that disagree with the SI</span></div>
      <div class="tbl-wrap"><table><thead><tr><th>Sender domain</th><th>BL checks</th><th>With discrepancies</th><th>Error rate</th><th>Most frequent field</th></tr></thead><tbody>
@@ -769,8 +774,9 @@ async function runAll(){try{await api("/api/run",{method:"POST",headers:{"Conten
 $("#btn-run").onclick=runAll;
 
 async function poll(){
-  try{const s=await api("/api/status");S.llm=s.llm;
-    $("#engine").innerHTML=s.llm?`<b><span class="dot on"></span>Claude connected</b><span>${esc(s.model)} + rules engine</span>`:`<b><span class="dot"></span>Rules engine</b><span>Set ANTHROPIC_API_KEY to enable Claude</span>`;
+  try{const s=await api("/api/status");S.llm=s.llm;S.provider=s.provider;
+    const ocrTxt=s.ocr?"OCR on":"OCR off";
+    $("#engine").innerHTML=s.llm?`<b><span class="dot on"></span>${esc(s.provider)} connected</b><span>${esc(s.model)} · rules · ${ocrTxt}</span>`:`<b><span class="dot${s.ocr?" on":""}"></span>Rules${s.ocr?" + OCR":""}</b><span>Add GEMINI_API_KEY (free) to enable the AI model</span>`;
     $("#job").hidden=!s.running;
     if(s.running){$("#jobbar").style.width=(100*s.done/Math.max(1,s.total))+"%";$("#jobtxt").textContent=`Processing ${s.done}/${s.total}`}
     if(s.running||poll.fast){await load();if(!s.running&&poll.fast){if(S.view==="insights")renderInsights();if(S.sel)show(S.sel)}}

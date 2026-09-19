@@ -67,6 +67,7 @@ _LEXICON: list[tuple[str, str]] = [
     (r"number of containers", "container_count"),
     (r"total containers", "container_count"),
     (r"container count", "container_count"),
+    (r"containers", "container_count"),
     (r"container no\.?", "_container_table"),
     # `[^\s:(]*` absorbs glyph junk such as "Weight毛重" / "Weightnn" from font fallback
     (r"total gross (?:weight|wt\.?)[^\s:(]*(?:\s*\((?:kgs?|kilograms?)\))?", "gross_weight_kg"),
@@ -146,9 +147,21 @@ _DOC_PATTERNS = [
 ]
 
 
+# Space-insensitive titles, for OCR output such as "BILLOF LADING (DRAFT".
+_SQUASHED = [("billofladinginstruction", DOC_SI), ("blinstruction", DOC_SI), ("shippinginstruction", DOC_SI),
+             ("billoflading", DOC_BL), ("seawaybill", DOC_BL), ("commercialinvoice", "COMMERCIAL_INVOICE"),
+             ("packinglist", "PACKING_LIST"), ("certificateoforigin", "CERTIFICATE_OF_ORIGIN")]
+
+
 def detect_doc_type(lines: list[str]) -> str | None:
     """Look at the document header (first few non-empty lines)."""
     head = [l.strip() for l in lines if l.strip() and not set(l.strip()) <= set("=-_*")][:4]
+    for line in head:
+        squashed = re.sub(r"[^a-z]", "", line.lower())
+        if ":" not in line:
+            for key, kind in _SQUASHED:
+                if squashed.startswith(key):
+                    return kind
     for line in head:
         low = line.lower()
         # skip label: value lines — the title is a bare heading

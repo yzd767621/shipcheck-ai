@@ -1,0 +1,9 @@
+PACKING LIST
+========================================
+
+Shipper: APRIL FAR EAST (M) SDN BHD
+Consignee: KTP CO., LTD
+Booking Ref: SIN990003
+
+Carton No.   Net Wt (kg)   Gross Wt (kg)
+CTN-001      571           635

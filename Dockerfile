@@ -4,6 +4,9 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8080 \
     SHIPCHECK_DB=/tmp/shipcheck/shipcheck.db SHIPCHECK_UPLOADS=/tmp/shipcheck/uploads
 WORKDIR /app
 
+# Tesseract OCR: free, local reading of scanned SI / BL pages (no API key needed)
+RUN apt-get update  && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng  && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

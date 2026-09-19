@@ -1,66 +1,65 @@
-"""Claude integration (Anthropic API).
+"""Generative-AI layer, with two interchangeable providers:
 
-Claude is used where rules run out:
-  1. classify   — emails the rule engine is unsure about (confidence < 0.75)
-  2. extract    — a field whose label the lexicon does not recognise
-  3. read_scan  — vision pre-read of image-only PDFs, shown to the human
-                  reviewer as a suggestion (never auto-accepted)
-  4. draft_reply— the discrepancy email back to the sender
+  * Google Gemini (free tier via Google AI Studio)  — GEMINI_API_KEY
+  * Anthropic Claude                               — ANTHROPIC_API_KEY
 
-All calls use structured JSON outputs so responses are machine-checkable.
-If no credentials are configured, get_client() returns None and the pipeline
-runs rules-only — the app still works end to end.
+The model is used where rules run out:
+  1. classify    — emails the rule engine is unsure about (confidence < 0.75)
+  2. extract     — a field whose label the lexicon does not recognise
+  3. read_scan   — vision pre-read of scanned pages, shown to the human
+                   reviewer as a suggestion (never auto-accepted)
+  4. draft_reply — the discrepancy email back to the sender
+
+Every call asks for JSON that matches a schema, so answers are machine-checkable.
+Without a key (or when a call fails / hits a free-tier limit) the pipeline
+silently falls back to the rules engine — the app keeps working end to end.
+
+Choose explicitly with SHIPCHECK_LLM=gemini|claude|none (default: auto).
 """
 from __future__ import annotations
 
 import base64
 import json
 import os
+import threading
 
 from .classifier import CATEGORIES, CATEGORY_HELP, Classification, clean_body
 from .fields import FIELD_LABELS, FIELDS
 
-MODEL = os.environ.get("SHIPCHECK_MODEL", "claude-opus-5")
+CLAUDE_MODEL = os.environ.get("SHIPCHECK_MODEL", "claude-opus-5")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
 def get_client():
-    if os.environ.get("SHIPCHECK_DISABLE_LLM") == "1":
+    choice = os.environ.get("SHIPCHECK_LLM", "auto").lower()
+    if os.environ.get("SHIPCHECK_DISABLE_LLM") == "1" or choice in ("none", "off", "rules"):
         return None
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        return None
-    try:
-        return ClaudeClient()
-    except Exception:
-        return None
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    claude_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    order = {"gemini": ["gemini"], "claude": ["claude"]}.get(choice, ["gemini", "claude"])
+    for name in order:
+        try:
+            if name == "gemini" and gemini_key:
+                return GeminiClient(gemini_key)
+            if name == "claude" and claude_key:
+                return ClaudeClient()
+        except Exception:
+            continue
+    return None
 
 
-class ClaudeClient:
-    def __init__(self, model: str = MODEL):
-        import anthropic
+# ---------------------------------------------------------------------- shared
+class BaseLLM:
+    """Task prompts live here; providers only implement `_json`."""
 
-        self.anthropic = anthropic
-        self.client = anthropic.Anthropic(max_retries=3, timeout=120)
-        self.model = model
+    name = "llm"         # short id stored on results ("gemini" / "claude")
+    label = "AI"         # display name
+    model = ""
 
-    # ------------------------------------------------------------ core call
-    def _json(self, system: str, content, schema: dict, max_tokens: int = 4000, effort: str = "low") -> dict:
-        resp = self.client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": content}],
-            output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
-            # On a safety decline, re-run server-side on Anthropic's recommended fallback model.
-            extra_headers={"anthropic-beta": FALLBACK_BETA},
-            extra_body={"fallbacks": "default"},
-        )
-        if resp.stop_reason == "refusal":
-            raise RuntimeError("model declined the request")
-        if resp.stop_reason == "max_tokens":
-            raise RuntimeError("model output truncated")
-        text = next(b.text for b in resp.content if b.type == "text")
-        return json.loads(text)
+    def _json(self, system: str, parts: list, schema: dict, effort: str = "low") -> dict:
+        """parts: list of str or ("image/png", bytes). Returns the parsed JSON object."""
+        raise NotImplementedError
 
     # ------------------------------------------------------------ classify
     def classify(self, email: dict, hint: Classification | None = None) -> Classification:
@@ -74,7 +73,8 @@ class ClaudeClient:
             "against an SI (even if an attachment is missing or wrong), or chasing the draft BL so it can be checked.\n"
             "- SI_REQUEST when the sender provides details for a new Shipping Instruction.\n"
             "- INVOICE_QUERY for invoices, charges, D&D, GR, cancellations.\n"
-            f"Categories:\n{cats}"
+            f"Categories:\n{cats}\n"
+            "confidence is a number between 0 and 1. rationale is one short sentence."
         )
         atts = email.get("attachments") or []
         user = (
@@ -94,61 +94,63 @@ class ClaudeClient:
             "required": ["category", "confidence", "rationale"],
             "additionalProperties": False,
         }
-        data = self._json(system, user, schema, max_tokens=1500)
-        conf = max(0.0, min(1.0, float(data["confidence"])))
-        return Classification(data["category"], round(conf, 2), [f"{data['category']}: Claude — {data['rationale']}"],
-                              engine="claude", rationale=data["rationale"])
+        data = self._json(system, [user], schema)
+        if data.get("category") not in CATEGORIES:
+            raise ValueError(f"unexpected category {data.get('category')!r}")
+        conf = max(0.0, min(1.0, float(data.get("confidence") or 0)))
+        why = data.get("rationale", "")
+        return Classification(data["category"], round(conf, 2), [f"{data['category']}: {self.label} — {why}"],
+                              engine=self.name, rationale=why)
 
     # ------------------------------------------------------------ extract
     def extract(self, text: str, doc_type: str, keys: list[str]) -> dict:
         system = (
             "You extract shipment fields from a shipping document. Labels vary between documents "
-            "('Port of Loading' = 'Load Port' = 'POL'; 'Consignee' = 'To the Order of'). Return the value "
-            "exactly as written in the document (first line only for parties). Gross weight is the TOTAL "
-            "gross weight, never net weight. If a field is absent, blank or a placeholder such as N/A, TBA or "
-            "'____', return null — never guess."
+            "('Port of Loading' = 'Load Port' = 'POL' = 'Origin Terminal'; 'Consignee' = 'To the Order of'). "
+            "Return each value exactly as written in the document (first line only for parties), the label it "
+            "was under, and the full source line as evidence. Gross weight is the TOTAL gross weight, never net "
+            "weight. If a field is absent, blank or a placeholder such as N/A, TBA or '____', return empty "
+            "strings for it — never guess."
         )
-        props = {
-            k: {"anyOf": [{"type": "null"}, {
-                "type": "object",
+        item = {"type": "object",
                 "properties": {"value": {"type": "string"}, "label": {"type": "string"}, "evidence": {"type": "string"}},
-                "required": ["value", "label", "evidence"], "additionalProperties": False}]}
-            for k in keys
-        }
-        schema = {"type": "object", "properties": props, "required": keys, "additionalProperties": False}
+                "required": ["value", "label", "evidence"], "additionalProperties": False}
+        schema = {"type": "object", "properties": {k: item for k in keys}, "required": keys, "additionalProperties": False}
         wanted = ", ".join(f"{k} ({FIELD_LABELS[k]})" for k in keys)
         user = f"Document type: {doc_type}\nFind: {wanted}\n\n<document>\n{text[:12000]}\n</document>"
-        return self._json(system, user, schema, max_tokens=3000)
+        data = self._json(system, [user], schema)
+        return {k: v for k, v in data.items() if k in keys and isinstance(v, dict) and (v.get("value") or "").strip()}
 
     # ------------------------------------------------------------ vision
     def read_scan(self, pages: list[bytes]) -> dict:
-        content = []
-        for png in pages[:4]:
-            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                                         "data": base64.standard_b64encode(png).decode()}})
-        content.append({"type": "text", "text": (
+        parts: list = [("image/png", png) for png in pages[:4]]
+        parts.append(
             "This is a scanned shipping document. Say whether it is a Shipping Instruction (SI), a draft Bill "
-            "of Lading (BL) or something else, and transcribe these fields exactly as printed: "
-            + ", ".join(FIELDS) + ". Use null where a value is not legible. Rate legibility 0-1.")})
-        field_schema = {"anyOf": [{"type": "null"}, {"type": "string"}]}
+            "of Lading (BL) or something else (OTHER), and transcribe these fields exactly as printed: "
+            + ", ".join(FIELDS) + ". Use an empty string where a value is missing or not legible. "
+            "legibility is a number between 0 and 1.")
         schema = {
             "type": "object",
             "properties": {
                 "doc_type": {"type": "string", "enum": ["SI", "BL", "OTHER"]},
                 "legibility": {"type": "number"},
-                "fields": {"type": "object", "properties": {k: field_schema for k in FIELDS},
+                "fields": {"type": "object", "properties": {k: {"type": "string"} for k in FIELDS},
                            "required": FIELDS, "additionalProperties": False},
             },
             "required": ["doc_type", "legibility", "fields"],
             "additionalProperties": False,
         }
         system = "You transcribe scanned logistics documents faithfully. Never invent characters you cannot read."
-        return self._json(system, content, schema, max_tokens=3000, effort="medium")
+        data = self._json(system, parts, schema, effort="medium")
+        data["fields"] = {k: (v or "").strip() for k, v in (data.get("fields") or {}).items() if k in FIELDS}
+        data["engine"] = f"{self.label} vision"
+        return data
 
     # ------------------------------------------------------------ reply
     def draft_reply(self, result: dict) -> str:
-        rows = [f"- {c['label']}: SI '{(c.get('si_raw') or '').splitlines()[0] if c.get('si_raw') else '—'}' / "
-                f"BL '{(c.get('bl_raw') or '').splitlines()[0] if c.get('bl_raw') else '—'}' ({c['status']})"
+        def first(v):
+            return (v or "").splitlines()[0] if v else "—"
+        rows = [f"- {c['label']}: SI '{first(c.get('si_raw'))}' / BL '{first(c.get('bl_raw'))}' ({c['status']})"
                 for c in result.get("comparison") or []]
         system = ("You write short, polite, professional emails for a shipping documentation desk. "
                   "Plain text, no markdown, under 180 words. Only state facts given to you.")
@@ -159,5 +161,112 @@ class ClaudeClient:
                 "(or, if NEEDS_REVIEW, asking for what is missing; if OK, confirming the draft BL is in order).")
         schema = {"type": "object", "properties": {"subject": {"type": "string"}, "body": {"type": "string"}},
                   "required": ["subject", "body"], "additionalProperties": False}
-        data = self._json(system, user, schema, max_tokens=2000)
+        data = self._json(system, [user], schema)
         return f"Subject: {data['subject']}\n\n{data['body']}"
+
+
+# ---------------------------------------------------------------------- Gemini
+def _strip_additional(schema):
+    """Gemini's JSON-schema mode does not need `additionalProperties`; drop it."""
+    if isinstance(schema, dict):
+        return {k: _strip_additional(v) for k, v in schema.items() if k != "additionalProperties"}
+    if isinstance(schema, list):
+        return [_strip_additional(v) for v in schema]
+    return schema
+
+
+class GeminiClient(BaseLLM):
+    name = "gemini"
+    label = "Gemini"
+
+    def __init__(self, api_key: str, model: str = GEMINI_MODEL):
+        from google import genai
+        from google.genai import errors, types
+
+        self.types, self.errors = types, errors
+        self.client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
+            timeout=120_000,
+            retry_options=types.HttpRetryOptions(attempts=3, http_status_codes=[429, 500, 502, 503, 504])))
+        self.model = model
+        self._resolved = False
+        self._lock = threading.Lock()
+
+    def _pick_model(self) -> str | None:
+        """Configured model not available on this key: choose the best current Flash model."""
+        names = []
+        for m in self.client.models.list():
+            name = (m.name or "").split("/")[-1]
+            actions = m.supported_actions or []
+            if "flash" in name and "generateContent" in actions and not any(x in name for x in ("image", "tts", "live", "audio", "embedding")):
+                names.append(name)
+        stable = [n for n in names if "preview" not in n and "exp" not in n] or names
+        stable.sort(key=lambda n: ("lite" in n, [-int(x) if x.isdigit() else 0 for x in n.replace("-", ".").split(".")]))
+        return stable[0] if stable else None
+
+    def _call(self, contents, config):
+        return self.client.models.generate_content(model=self.model, contents=contents, config=config)
+
+    def _json(self, system, parts, schema, effort="low"):
+        t = self.types
+        contents = [t.Part.from_text(text=p) if isinstance(p, str) else t.Part.from_bytes(data=p[1], mime_type=p[0])
+                    for p in parts]
+        config = t.GenerateContentConfig(system_instruction=system, response_mime_type="application/json",
+                                         response_json_schema=_strip_additional(schema))
+        try:
+            resp = self._call(contents, config)
+        except self.errors.ClientError as exc:
+            if exc.code != 404 or self._resolved:
+                raise
+            with self._lock:
+                self._resolved = True
+                picked = self._pick_model()
+            if not picked:
+                raise
+            self.model = picked
+            resp = self._call(contents, config)
+        text = resp.text
+        if not text:
+            raise RuntimeError(f"empty response from Gemini ({resp.prompt_feedback})")
+        return json.loads(text)
+
+
+# ---------------------------------------------------------------------- Claude
+class ClaudeClient(BaseLLM):
+    name = "claude"
+    label = "Claude"
+
+    def __init__(self, model: str = CLAUDE_MODEL):
+        import anthropic
+
+        self.anthropic = anthropic
+        self.client = anthropic.Anthropic(max_retries=3, timeout=120)
+        self.model = model
+
+    def _json(self, system, parts, schema, effort="low"):
+        content = []
+        for p in parts:
+            if isinstance(p, str):
+                content.append({"type": "text", "text": p})
+            else:
+                content.append({"type": "image", "source": {"type": "base64", "media_type": p[0],
+                                                             "data": base64.standard_b64encode(p[1]).decode()}})
+        params = dict(
+            model=self.model,
+            max_tokens=4000,
+            system=system,
+            messages=[{"role": "user", "content": content}],
+            output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
+        )
+        try:
+            # On a safety decline, re-run server-side on Anthropic's recommended fallback model.
+            resp = self.client.messages.create(**params, extra_headers={"anthropic-beta": FALLBACK_BETA},
+                                               extra_body={"fallbacks": "default"})
+        except self.anthropic.BadRequestError:
+            # Account/model without the fallback beta: the core request still works without it.
+            resp = self.client.messages.create(**params)
+        if resp.stop_reason == "refusal":
+            raise RuntimeError("model declined the request")
+        if resp.stop_reason == "max_tokens":
+            raise RuntimeError("model output truncated")
+        text = next(b.text for b in resp.content if b.type == "text")
+        return json.loads(text)

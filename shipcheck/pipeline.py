@@ -14,6 +14,7 @@ from . import llm
 from .classifier import Classification, RuleClassifier, clean_body
 from .compare import compare, compare_field, is_missing
 from .fields import DOC_BL, DOC_SI, FIELD_LABELS, FIELDS, detect_doc_type, extract_fields
+from . import ocr
 from .parsers import ParsedDoc, parse_attachment
 
 REVIEW_REASONS = {
@@ -126,7 +127,7 @@ class Pipeline:
             view = {
                 "path": p.path, "format": p.fmt, "readable": p.readable, "issue": p.issue,
                 "doc_type": d["doc_type"], "role": None, "fields": {}, "unknown_labels": [],
-                "text": p.text[:4000], "ai_read": None,
+                "text": p.text[:4000], "pre_read": None,
             }
             if p.readable:
                 ex = extract_fields(p.lines)
@@ -134,10 +135,13 @@ class Pipeline:
                 view["fields"] = {k: {"value": ex.values[k], "label": ex.labels.get(k), "evidence": ex.evidence.get(k),
                                       "method": ex.method.get(k, "lexicon")} for k in ex.values}
                 view["unknown_labels"] = ex.unknown_labels
-            elif p.issue == "image_only" and self.ai:
-                view["ai_read"] = self._llm_vision(p)
+            elif p.issue == "image_only":
+                view["pre_read"] = self._pre_read(p)
             # role: trust the document header over the file name
             role = d["doc_type"]
+            pre = view["pre_read"] or {}
+            if role is None and pre.get("doc_type") in (DOC_SI, DOC_BL):
+                role = pre["doc_type"]
             if role is None and p.readable:
                 role = DOC_SI if "_SI." in p.path.upper() else DOC_BL if "_BL." in p.path.upper() else None
             view["role"] = role
@@ -145,6 +149,8 @@ class Pipeline:
                 si = view
             elif role == DOC_BL and bl is None:
                 bl = view
+            if not p.readable:
+                view["doc_type"] = view["doc_type"] or (pre.get("doc_type") if pre.get("doc_type") in (DOC_SI, DOC_BL) else None)
             doc_views.append(view)
         out["documents"] = doc_views
 
@@ -156,9 +162,17 @@ class Pipeline:
 
         unreadable = [v for v in doc_views if not v["readable"]]
         if unreadable:
-            names = ", ".join(f"{v['path'].split('/')[-1]} ({v['issue']})" for v in unreadable)
-            hint = " An AI pre-read of the scan is attached for the reviewer to confirm." if any(v["ai_read"] for v in unreadable) else ""
-            return review("unreadable", f"cannot read {names}.{hint}")
+            names = ", ".join(f"{v['path'].split('/')[-1]} ({'scanned image' if v['issue'] == 'image_only' else v['issue']})"
+                              for v in unreadable)
+            detail = f"cannot read {names} with certainty."
+            reads = [v["pre_read"] for v in unreadable if v["pre_read"] and v["pre_read"].get("fields")]
+            if reads:
+                engines = sorted({r.get("engine", "OCR") for r in reads})
+                detail += f" {' + '.join(engines)} read the scan; values are pre-filled for a person to confirm."
+                self._preliminary(si, bl, out)
+                if out.get("preliminary_defects"):
+                    detail += " Suggested differences: " + ", ".join(FIELD_LABELS[f] for f in out["preliminary_defects"]) + "."
+            return review("unreadable", detail)
 
         wrong = [v for v in doc_views if v["doc_type"] not in (DOC_SI, DOC_BL, None)]
         if wrong:
@@ -233,11 +247,56 @@ class Pipeline:
                 ex.evidence[k] = item.get("evidence") or item["value"]
                 ex.method[k] = "llm"
 
-    def _llm_vision(self, p: ParsedDoc):
-        try:
-            return self.ai.read_scan(p.image_pages)
-        except Exception as exc:
-            return {"error": f"{type(exc).__name__}: {exc}"}
+    def _pre_read(self, p: ParsedDoc) -> dict | None:
+        """Read a scanned page two ways: local OCR (free, always on when
+        Tesseract is installed) and the AI model's vision (when a key is set).
+        Per field, the AI reading wins and OCR fills the gaps."""
+        result: dict = {"fields": {}, "sources": {}}
+        engines = []
+        ocr_res = ocr.read_pages(p.image_pages)
+        if ocr_res:
+            engines.append("OCR (Tesseract)")
+            ex = extract_fields(ocr_res["lines"])
+            result.update(ocr_text="\n".join(ocr_res["lines"]), ocr_confidence=ocr_res["confidence"],
+                          doc_type=detect_doc_type(ocr_res["lines"]))
+            for k, v in ex.values.items():
+                if not is_missing(v):
+                    result["fields"][k] = v.split("\n")[0].strip()
+                    result["sources"][k] = "OCR"
+        if self.ai:
+            try:
+                vis = self.ai.read_scan(p.image_pages)
+                engines.insert(0, vis.get("engine", "AI vision"))
+                result["legibility"] = vis.get("legibility")
+                if vis.get("doc_type") in (DOC_SI, DOC_BL) or not result.get("doc_type"):
+                    result["doc_type"] = vis.get("doc_type")
+                for k, v in (vis.get("fields") or {}).items():
+                    if v and not is_missing(v):
+                        result["fields"][k] = v
+                        result["sources"][k] = self.ai.label
+            except Exception as exc:
+                result["ai_error"] = f"{type(exc).__name__}: {exc}"
+        if not engines:
+            return None
+        result["engine"] = " + ".join(engines)
+        return result
+
+    def _preliminary(self, si: dict | None, bl: dict | None, out: dict):
+        """Compare using the scan readings, clearly marked as preliminary."""
+        def values(view):
+            if not view:
+                return None
+            if view["readable"]:
+                return {k: v["value"] for k, v in view["fields"].items()}
+            return dict((view.get("pre_read") or {}).get("fields") or {}) or None
+        a, b = values(si), values(bl)
+        if not a or not b:
+            return
+        cmp = compare(a, b)
+        out["comparison"] = [f.to_dict() | {"label": FIELD_LABELS[f.field]} for f in cmp.fields]
+        out["preliminary"] = True
+        # Near-identical text from a scan is most likely OCR noise, not a real difference.
+        out["preliminary_defects"] = [f.field for f in cmp.fields if f.status == "mismatch" and f.confidence >= 0.8]
 
 
 # ---------------------------------------------------------------- helpers

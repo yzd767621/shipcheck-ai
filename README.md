@@ -30,11 +30,11 @@ The engine never sees the answer key. The results above come from general rules 
 
 | Capability | How |
 |---|---|
-| **Classify** | An explainable weighted-signal classifier reads the *newest* message body. It strips external-sender banners, quoted threads and signatures, because subjects such as `RE_ TO CONFIRM DOCS` are recycled and misleading. It also looks at what is attached. Each decision comes with a confidence score and the signals that fired. **Claude** decides whenever confidence is below 0.75. |
-| **Extract** | Parsers for TXT, PDF (character-level, splitting bold labels from values so overflowing labels don't mix with values), DOCX (tables in body order) and XLSX. A label lexicon of about 60 variants, including bilingual `PORT OF LOADING (装货港)`, aligns fields by meaning. Net weight and per-container rows are never taken as the gross total. When a label is not recognised, **Claude** finds the field in the document text and records the evidence line. |
+| **Classify** | An explainable weighted-signal classifier reads the *newest* message body. It strips external-sender banners, quoted threads and signatures, because subjects such as `RE_ TO CONFIRM DOCS` are recycled and misleading. It also looks at what is attached. Each decision comes with a confidence score and the signals that fired. The **AI model (Gemini free tier, or Claude)** decides whenever confidence is below 0.75. |
+| **Extract** | Parsers for TXT, PDF (character-level, splitting bold labels from values so overflowing labels don't mix with values), DOCX (tables in body order) and XLSX. A label lexicon of about 60 variants, including bilingual `PORT OF LOADING (装货港)`, aligns fields by meaning. Net weight and per-container rows are never taken as the gross total. When a label is not recognised, the **AI model** finds the field in the document text and records the evidence line. |
 | **Compare** | Normalisation removes formatting noise before comparing: legal suffixes (`LIMITED`→`LTD`), punctuation, UN/LOCODEs, port and country aliases (`Ho Chi Minh City, Viet Nam` = `HOCHIMINH CITY, VIETNAM`), thousands separators, `MT`/`LBS` to kg, and container expressions. Real differences are flagged with SI and BL side by side, the size of the difference, and a lower-confidence note when two names differ only slightly (a possible typo). |
-| **Ask for help** | `NEEDS_REVIEW` with a reason and evidence: `unreadable` (corrupt or image-only file; **Claude vision** pre-reads the scan so the reviewer only has to confirm), `wrong_doc_type` (e.g. a Commercial Invoice in the BL slot, detected from the document header rather than the file name), `missing_attachment`, and `missing_value` (N/A, TBA, `____ MT`). The reviewer's correction recalculates the report, and the full history is stored. Processing failures show up as `ERROR` with a **Retry** button. |
-| **Act** | "Draft reply to sender" writes the amendment request email (Claude, with a template fallback). |
+| **Ask for help** | `NEEDS_REVIEW` with a reason and evidence: `unreadable` (corrupt or image-only file; free local **OCR (Tesseract)**, plus **Gemini vision** when a key is set, pre-reads the scan so the reviewer only has to confirm), `wrong_doc_type` (e.g. a Commercial Invoice in the BL slot, detected from the document header rather than the file name), `missing_attachment`, and `missing_value` (N/A, TBA, `____ MT`). The reviewer's correction recalculates the report, and the full history is stored. Processing failures show up as `ERROR` with a **Retry** button. |
+| **Act** | "Draft reply to sender" writes the amendment request email (Gemini, with a template fallback). |
 
 ### The operations console
 
@@ -42,11 +42,11 @@ The engine never sees the answer key. The results above come from general rules 
 |---|---|
 | **Inbox + pipeline stepper** | Each email shows *Received → Classified → Extracted → Compared → Result*, so it's clear where and why a case stopped. |
 | **Click-to-evidence** | Click a field in the SI vs BL table (or press `1`–`7`) to highlight the exact source lines in both documents. Staff can trust the flag without re-reading the whole document. |
-| **Review queue** | Only the cases that need a person. Values the system already read are pre-filled, including Claude's reading of scanned pages. `Ctrl+Enter` confirms and opens the next case. |
+| **Review queue** | Only the cases that need a person. Values the system already read are pre-filled, including the OCR / Gemini reading of scanned pages. `Ctrl+Enter` confirms and opens the next case. |
 | **Insights dashboard** | Estimated staff hours saved (with stated assumptions), automation rate, draft-BL error rate, discrepancies by field, review reasons, confidence spread, and **sender hotspots** (which counterparties send the most faulty drafts, and on which field). |
 | **Printable discrepancy report** | A one-page SI vs BL report per email (`/report/{id}`) that can be printed or saved as PDF and attached to the amendment request. |
 | **CSV export** | Every flagged field across the inbox, ready for Excel or a TMS import. |
-| **Reply drafting** | An amendment request or confirmation email, drafted by Claude (with a template fallback). |
+| **Reply drafting** | An amendment request or confirmation email, drafted by Gemini (with a template fallback). |
 | **Activity log** | An audit trail of batch runs, uploads, retries and every human decision, including notes. |
 | **Command palette** | `Ctrl+K` searches emails, senders and fields, and runs commands. `J`/`K` move through the list; `?` lists all shortcuts. |
 | **Light / dark / system theme** | Responsive layout for laptop and tablet. |
@@ -60,14 +60,14 @@ The engine never sees the answer key. The results above come from general rules 
 ```mermaid
 flowchart LR
     A[Inbox<br/>JSON + attachments<br/>local folder or HTTP server] --> B[Classifier<br/>rules + confidence]
-    B -- confidence < 0.75 --> C[Claude<br/>structured JSON]
+    B -- confidence < 0.75 --> C[Gemini free tier or Claude<br/>structured JSON]
     C --> D{Category}
     B --> D
     D -- SI / invoice / general / spam --> R[(Result store<br/>SQLite)]
     D -- BL_COMPARISON --> E[Parsers<br/>TXT · PDF · DOCX · XLSX]
-    E -- image-only / corrupt --> V[Claude vision pre-read] --> H
+    E -- image-only / corrupt --> V[OCR Tesseract + Gemini vision<br/>preliminary comparison] --> H
     E --> F[Doc-type detection<br/>by header, not filename]
-    F --> G[Field alignment<br/>lexicon → keywords → Claude]
+    F --> G[Field alignment<br/>lexicon → keywords → Gemini]
     G --> K[Normalise + compare<br/>7 fields]
     K -- blank / wrong doc / missing --> H[Human review queue<br/>evidence + reason]
     K -- match / mismatch --> R
@@ -75,9 +75,9 @@ flowchart LR
     R --> UI[Web console + REST API<br/>report · review · retry · reply · export]
 ```
 
-**Why hybrid rules + LLM?** Rules are fast, free, deterministic and auditable, and they handle the formats they know perfectly. Claude covers the long tail: new wording, unknown labels, scanned pages and reply writing. It always returns **schema-validated JSON**, and it never overrides a value the rules found blank. The app still runs fully without an API key (rules-only mode), so a demo never depends on the network.
+**Why hybrid rules + AI?** Rules are fast, free, deterministic and auditable, and they handle the formats they know perfectly. The AI covers the long tail: new wording, unknown labels, scanned pages and reply writing. It always returns **schema-validated JSON**, and it never overrides a value the rules found blank. The app still runs fully without an API key (rules-only mode), so a demo never depends on the network.
 
-**Cloud:** a stateless container (Docker) deployed on **Google Cloud Run** (or Render). Claude is called through the **Anthropic API** (`claude-opus-5` by default), with server-side refusal fallback enabled.
+**Cloud & AI:** a stateless container (Docker) deployed on **Render** or **Google Cloud Run**. The AI model is **Google Gemini on the free tier** (Google AI Studio key, no cost) or **Anthropic Claude**; scanned pages are read by **Tesseract OCR** inside the container, with no key at all. Without any key the app still runs on rules + OCR.
 
 ### Project layout
 
@@ -87,13 +87,14 @@ shipcheck/
   fields.py      label lexicon, doc-type detection, field extraction with evidence
   compare.py     normalisation + per-field comparison with confidence and notes
   classifier.py  explainable rule classifier
-  llm.py         Claude: classify, extract, read_scan (vision), draft_reply
+  llm.py         AI model (Gemini free tier or Claude): classify, extract, read_scan (vision), draft_reply
+  ocr.py         free local OCR (Tesseract) for scanned pages
   pipeline.py    orchestration, escalation rules, human-review recalculation, submission export
   store.py       SQLite result store + audit log
 app.py           FastAPI app (REST API + web console)
 web/index.html   single-page operations console (no build step): inbox, review queue, insights, activity
 scripts/run_batch.py   CLI: process the inbox, write results + submission.json, optionally submit for scoring
-tests/           41 robustness tests on synthetic messy inputs + 5 API tests
+tests/           53 tests: messy-input robustness, API, OCR and Gemini (fake transport)
 data/            the participant dataset bundle (inbox/, attachments/, loader.py)
 ```
 
@@ -104,7 +105,8 @@ data/            the participant dataset bundle (inbox/, attachments/, loader.py
 ```bash
 python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...                  # optional: enables Claude (Windows: set ANTHROPIC_API_KEY=...)
+export GEMINI_API_KEY=...                         # optional, FREE key from aistudio.google.com/apikey (Windows: set GEMINI_API_KEY=...)
+# Optional OCR for scans: install Tesseract (Windows: winget install UB-Mannheim.TesseractOCR). The Docker image includes it.
 uvicorn app:app --port 8000
 # open http://localhost:8000. The inbox is processed automatically on first start.
 ```
@@ -115,13 +117,17 @@ Batch mode and self-evaluation:
 python scripts/run_batch.py                 # writes out/results.json and out/submission.json
 python scripts/run_batch.py --no-llm        # rules only
 python scripts/run_batch.py --source http://localhost:8080 --submit   # against the organisers' inbox server
-pip install -r requirements-dev.txt && python -m pytest -q   # 46 tests
+pip install -r requirements-dev.txt && python -m pytest -q   # 53 tests
 ```
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | none | enables Claude |
+| `GEMINI_API_KEY` | none | enables Google Gemini (free tier) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model (falls back to the newest available Flash model) |
+| `ANTHROPIC_API_KEY` | none | alternative: Claude (paid) |
 | `SHIPCHECK_MODEL` | `claude-opus-5` | Claude model |
+| `SHIPCHECK_LLM` | `auto` | `gemini`, `claude` or `none` |
+| `TESSERACT_CMD` | auto-detected | path to the Tesseract binary |
 | `SHIPCHECK_SOURCE` | `./data` | dataset folder or inbox server URL |
 | `SHIPCHECK_DB` | `./out/shipcheck.db` | result store |
 | `SHIPCHECK_DISABLE_LLM` | none | set to `1` to force rules-only |
@@ -142,15 +148,15 @@ Time-saved assumptions are configurable: `SHIPCHECK_TRIAGE_MIN` (1.5), `SHIPCHEC
 gcloud auth login
 gcloud config set project <your-project-id>
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
-printf "%s" "$ANTHROPIC_API_KEY" | gcloud secrets create anthropic-api-key --data-file=-
+printf "%s" "$GEMINI_API_KEY" | gcloud secrets create gemini-api-key --data-file=-
 gcloud run deploy shipcheck-ai --source . --region asia-southeast1 \
   --allow-unauthenticated --memory 1Gi --min-instances 1 \
-  --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest
+  --set-secrets GEMINI_API_KEY=gemini-api-key:latest
 ```
 
 (Grant the Cloud Run service account the *Secret Manager Secret Accessor* role if prompted.) `--min-instances 1` keeps the demo warm and the in-container store alive during judging. For durable storage, set `SHIPCHECK_DB` to a mounted Cloud Storage / Filestore volume, or swap `store.py` for Firestore.
 
-**Render:** New → Blueprint → select this repo (`render.yaml`), then set `ANTHROPIC_API_KEY` in the dashboard.
+**Render:** New → Blueprint → select this repo (`render.yaml`), then set `GEMINI_API_KEY` (free) in the dashboard.
 
 ---
 
@@ -166,7 +172,7 @@ gcloud run deploy shipcheck-ai --source . --region asia-southeast1 \
 ## Roadmap
 
 - Live mailbox connectors (Microsoft Graph / Gmail API) and a push-based queue (Pub/Sub).
-- OCR fallback (Tesseract / Document AI) alongside Claude vision, with confidence voting.
+- Document AI / layout-aware OCR, with confidence voting between OCR and vision models.
 - Learn new label variants from reviewer corrections (feedback into the lexicon).
 - More fields (vessel/voyage, HS code, marks & numbers) and configurable per-customer tolerance rules.
 - Role-based access, SSO, and an exportable PDF discrepancy report for customers.

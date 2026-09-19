@@ -198,6 +198,8 @@ def compare_field(key: str, si_raw: str | None, bl_raw: str | None) -> FieldResu
 
     if key == "gross_weight_kg":
         same = abs(a - b) < 0.5
+    elif key in ("port_of_loading", "port_of_discharge"):
+        same = a == b or re.sub(r"[\s,]+", " ", a) == re.sub(r"[\s,]+", " ", b)
     else:
         same = a == b
     if same:

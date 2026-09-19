@@ -6,5 +6,5 @@ services:
     plan: free
     healthCheckPath: /api/health
     envVars:
-      - key: ANTHROPIC_API_KEY
-        sync: false        # set in the Render dashboard
+      - key: GEMINI_API_KEY      # free key from https://aistudio.google.com/apikey
+        sync: false              # set in the Render dashboard

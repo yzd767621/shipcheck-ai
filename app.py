@@ -5,7 +5,8 @@
 Environment:
     SHIPCHECK_SOURCE   data folder or inbox server URL      (default ./data)
     SHIPCHECK_DB       SQLite path                          (default ./out/shipcheck.db)
-    ANTHROPIC_API_KEY  enables Claude (classification fallback, field finding,
+    GEMINI_API_KEY     enables Google Gemini (free tier) — or ANTHROPIC_API_KEY for Claude
+                       (classification fallback, field finding,
                        scanned-document pre-read, reply drafting)
 """
 from __future__ import annotations
@@ -27,7 +28,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "data"))
 
 from loader import Inbox  # noqa: E402
-from shipcheck import llm  # noqa: E402
+from shipcheck import llm, ocr  # noqa: E402
 from shipcheck.pipeline import Pipeline, apply_human_review, now, to_submission  # noqa: E402
 from shipcheck.store import Store  # noqa: E402
 
@@ -105,13 +106,19 @@ def _startup():
 # ------------------------------------------------------------------ API
 @app.get("/api/health")
 def health():
-    return {"ok": True, "emails": store.count(), "llm": bool(pipeline.ai), "model": llm.MODEL if pipeline.ai else None,
+    return {"ok": True, "emails": store.count(), **_engine(),
             "source": SOURCE}
 
 
 @app.get("/api/status")
 def status():
-    return {**_job, "llm": bool(pipeline.ai), "model": llm.MODEL if pipeline.ai else None}
+    return {**_job, **_engine()}
+
+
+def _engine() -> dict:
+    ai = pipeline.ai
+    return {"llm": bool(ai), "provider": ai.label if ai else None, "model": ai.model if ai else None,
+            "ocr": ocr.available()}
 
 
 @app.post("/api/run")
@@ -183,10 +190,10 @@ def draft_reply(email_id: str):
         raise HTTPException(404)
     if pipeline.ai:
         try:
-            return {"engine": "claude", "text": pipeline.ai.draft_reply(r)}
+            return {"engine": pipeline.ai.label, "text": pipeline.ai.draft_reply(r)}
         except Exception as exc:
             fallback = _template_reply(r)
-            return {"engine": "template", "text": fallback, "warning": f"Claude unavailable ({type(exc).__name__})"}
+            return {"engine": "template", "text": fallback, "warning": f"{pipeline.ai.label} unavailable ({type(exc).__name__}) — template used"}
     return {"engine": "template", "text": _template_reply(r)}
 
 
@@ -428,4 +435,5 @@ def submit_for_score():
 # ------------------------------------------------------------------ UI
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return FileResponse(ROOT / "web" / "index.html")
+    # Always revalidate so a redeploy shows up immediately instead of a cached old UI.
+    return FileResponse(ROOT / "web" / "index.html", headers={"Cache-Control": "no-cache, must-revalidate"})
