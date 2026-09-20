@@ -151,3 +151,23 @@ def test_key_value_whitespace_and_quotes_are_tolerated(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", '  "AIza-test-key"  ')
     c = llm.get_client()
     assert isinstance(c, llm.GeminiClient) and llm.STATUS["reason"] is None
+
+
+def test_quota_error_pauses_ai_instead_of_hammering():
+    from google.genai import errors
+    quota = errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                                               "message": "You exceeded your current quota"}})
+    m = FakeModels({"category": "GENERAL", "confidence": 0.9, "rationale": "x"}, fail_first_with=quota)
+    c = gemini_with(m)
+    email = {"from": "x", "subject": "hi", "body": "hello", "attachments": []}
+    with pytest.raises(errors.ClientError):
+        c.classify(email)
+    assert "limit reached" in c.last_error
+    with pytest.raises(RuntimeError, match="paused"):
+        c.classify(email)                      # no second network call while cooling down
+    assert len(m.calls) == 1
+    # the pipeline falls back to the rules engine and keeps working
+    pipe = Pipeline(FS(), use_llm=False)
+    pipe.ai = c
+    r = pipe.process({"email_id": "q", "from": "a", "subject": "hello", "body": "see you", "attachments": []})
+    assert r["category"] == "GENERAL" and r["category_engine"] == "rules"

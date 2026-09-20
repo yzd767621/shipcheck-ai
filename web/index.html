@@ -838,9 +838,9 @@ $("#btn-run").onclick=runAll;
 async function poll(){
   try{const s=await api("/api/status");S.llm=s.llm;S.provider=s.provider;
     const ocrTxt=s.ocr?"OCR on":"OCR off";
-    const sig=JSON.stringify([s.llm,s.provider,s.model,s.llm_reason,s.ocr]);
+    const sig=JSON.stringify([s.llm,s.provider,s.model,s.llm_reason,s.llm_note,s.ocr]);
     if(sig!==poll.sig){poll.sig=sig;
-      $("#engine").innerHTML=(s.llm?`<b><span class="dot on"></span>${esc(s.provider)} connected</b><span>${esc(s.model)} · rules · ${ocrTxt}</span>`
+      $("#engine").innerHTML=(s.llm?`<b><span class="dot on"></span>${esc(s.provider)} connected</b><span>${esc(s.model)} · rules · ${ocrTxt}</span>${s.llm_note?`<span class="why" style="color:var(--warn)">${esc(s.llm_note)}</span>`:""}`
         :`<b><span class="dot${s.ocr?" on":""}"></span>Rules${s.ocr?" + OCR":""} · AI off</b><span class="why">${esc(s.llm_reason||"Add GEMINI_API_KEY (free) to enable the AI model")}</span>`)
         +`<button class="btn sm" id="ai-test" style="margin-top:8px;width:100%;justify-content:center">${ico("sparkle")}Test AI connection</button><div id="ai-res" class="why" hidden></div>`;
       $("#ai-test").onclick=testAI}

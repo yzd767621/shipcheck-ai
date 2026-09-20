@@ -48,6 +48,10 @@ class UploadAwareInbox(Inbox):
 
 inbox = UploadAwareInbox(SOURCE)
 pipeline = Pipeline(inbox)
+# Background (re)processing of the whole inbox runs on rules + OCR only, so the
+# AI model's free quota is kept for live actions: uploads, retries, replies.
+AI_IN_BATCH = os.environ.get("SHIPCHECK_AI_BATCH", "0") == "1"
+batch_pipeline = pipeline if AI_IN_BATCH else Pipeline(inbox, use_llm=False)
 @contextlib.asynccontextmanager
 async def _lifespan(_app):
     _startup()
@@ -73,7 +77,7 @@ def _run_all(ids: list[str] | None = None):
         if prev and prev.get("reviewed"):          # never overwrite a human decision
             res = prev
         else:
-            res = pipeline.process(e)
+            res = batch_pipeline.process(e)
         store.put(res)
         with _job_lock:
             _job["done"] += 1
@@ -118,7 +122,8 @@ def status():
 def _engine() -> dict:
     ai = pipeline.ai
     return {"llm": bool(ai), "provider": ai.label if ai else None, "model": ai.model if ai else None,
-            "llm_reason": llm.STATUS.get("reason"), "ocr": ocr.available()}
+            "llm_reason": llm.STATUS.get("reason"), "llm_note": getattr(ai, "last_error", None) if ai else None,
+            "ai_in_batch": AI_IN_BATCH, "ocr": ocr.available()}
 
 
 @app.post("/api/ai-check")

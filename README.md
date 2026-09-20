@@ -151,11 +151,35 @@ gcloud config set project <your-project-id>
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
 printf "%s" "$GEMINI_API_KEY" | gcloud secrets create gemini-api-key --data-file=-
 gcloud run deploy shipcheck-ai --source . --region asia-southeast1 \
-  --allow-unauthenticated --memory 1Gi --min-instances 1 \
+  --allow-unauthenticated --memory 1Gi --cpu 1 \
+  --min-instances 0 --max-instances 1 --no-cpu-throttling \
   --set-secrets GEMINI_API_KEY=gemini-api-key:latest
 ```
 
-(Grant the Cloud Run service account the *Secret Manager Secret Accessor* role if prompted.) `--min-instances 1` keeps the demo warm and the in-container store alive during judging. For durable storage, set `SHIPCHECK_DB` to a mounted Cloud Storage / Filestore volume, or swap `store.py` for Firestore.
+(Grant the Cloud Run service account the *Secret Manager Secret Accessor* role if prompted.)
+
+Why these flags:
+- `--min-instances 0`: the service scales to zero when nobody is using it, so it stays inside the always-free tier. `--min-instances 1` avoids cold starts but is billed around the clock.
+- `--max-instances 1`: the result store is a file inside the instance, so all visitors must share one instance. This also caps the cost.
+- `--no-cpu-throttling`: the inbox is processed in a background thread after start-up, which needs CPU between requests.
+
+**On Windows (Command Prompt)** `printf` does not exist and `\` does not continue a line — put each command on one line:
+
+```bat
+cd C:\path	o\shipcheck-ai
+gcloud config set project <your-project-id>
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
+echo YOUR_GEMINI_KEY> key.txt
+gcloud secrets create gemini-api-key --data-file=key.txt
+del key.txt
+gcloud run deploy shipcheck-ai --source . --region asia-southeast1 --allow-unauthenticated --memory 1Gi --cpu 1 --min-instances 0 --max-instances 1 --no-cpu-throttling --set-secrets GEMINI_API_KEY=gemini-api-key:latest
+```
+
+(Answer `Y` when asked to create the Artifact Registry repository and to grant access to the secret. Simpler alternative to the secret: `--set-env-vars GEMINI_API_KEY=YOUR_GEMINI_KEY`.)
+
+Keep the Gemini key's own project (`gen-lang-client-…`) **without** billing so the key stays on the free tier; deploy Cloud Run from a different project.
+
+Set a budget alert (Billing → Budgets & alerts) before deploying. For durable storage, set `SHIPCHECK_DB` to a mounted volume, or swap `store.py` for Firestore.
 
 **Render:** New → Blueprint → select this repo (`render.yaml`), then set `GEMINI_API_KEY` (free) in the dashboard.
 

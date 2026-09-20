@@ -22,6 +22,7 @@ import base64
 import json
 import os
 import threading
+import time
 
 from .classifier import CATEGORIES, CATEGORY_HELP, Classification, clean_body
 from .fields import FIELD_LABELS, FIELDS
@@ -97,7 +98,33 @@ class BaseLLM:
     label = "AI"         # display name
     model = ""
 
+    cooldown_until = 0.0
+    last_error: str | None = None
+
     def _json(self, system: str, parts: list, schema: dict, effort: str = "low") -> dict:
+        """Guarded call: after a usage-limit error (HTTP 429) pause the AI for a
+        while instead of hammering the API — the rules engine covers meanwhile,
+        and the remaining free quota is kept for live, user-triggered actions."""
+        wait = self.cooldown_until - time.time()
+        if wait > 0:
+            raise RuntimeError(f"{self.label} paused after reaching its usage limit; retry in {int(wait) + 1}s")
+        try:
+            out = self._provider_json(system, parts, schema, effort)
+            self.last_error = None
+            return out
+        except Exception as exc:
+            msg = str(exc)
+            low = msg.lower()
+            if "429" in msg or "resource_exhausted" in low or "quota" in low or "rate limit" in low:
+                daily = "perday" in low.replace(" ", "").replace("_", "") or "per day" in low
+                self.cooldown_until = time.time() + (600 if daily else 60)
+                self.last_error = (f"{self.label} free-tier limit reached at {time.strftime('%H:%M', time.gmtime())} UTC; "
+                                   f"using rules + OCR until it resets")
+            else:
+                self.last_error = f"{type(exc).__name__}: {msg[:160]}"
+            raise
+
+    def _provider_json(self, system: str, parts: list, schema: dict, effort: str = "low") -> dict:
         """parts: list of str or ("image/png", bytes). Returns the parsed JSON object."""
         raise NotImplementedError
 
@@ -226,7 +253,7 @@ class GeminiClient(BaseLLM):
         self.types, self.errors = types, errors
         self.client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
             timeout=120_000,
-            retry_options=types.HttpRetryOptions(attempts=3, http_status_codes=[429, 500, 502, 503, 504])))
+            retry_options=types.HttpRetryOptions(attempts=3, http_status_codes=[500, 502, 503, 504])))
         self.model = model
         self._resolved = False
         self._lock = threading.Lock()
@@ -246,7 +273,7 @@ class GeminiClient(BaseLLM):
     def _call(self, contents, config):
         return self.client.models.generate_content(model=self.model, contents=contents, config=config)
 
-    def _json(self, system, parts, schema, effort="low"):
+    def _provider_json(self, system, parts, schema, effort="low"):
         t = self.types
         contents = [t.Part.from_text(text=p) if isinstance(p, str) else t.Part.from_bytes(data=p[1], mime_type=p[0])
                     for p in parts]
@@ -282,7 +309,7 @@ class ClaudeClient(BaseLLM):
         self.client = anthropic.Anthropic(max_retries=3, timeout=120)
         self.model = model
 
-    def _json(self, system, parts, schema, effort="low"):
+    def _provider_json(self, system, parts, schema, effort="low"):
         content = []
         for p in parts:
             if isinstance(p, str):
