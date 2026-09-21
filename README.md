@@ -1,7 +1,7 @@
 # ShipCheck AI
 
 
-🌐 **Live Demo**: [https://shipcheck-ai.onrender.com](https://shipcheck-ai.onrender.com)  
+🌐 **Live Demo**: [https://shipcheck-ai.onrender.com](https://shipcheck-ai.onrender.com)  (it may takes few minutes to be fully ready, please wait patiently)
 🎥 **5-Minute Video Pitch**: [Watch Demo Video](https://drive.google.com/file/d/19nWLSXbLaniAlkYJrzfJQwVASSQOsi9C/view?usp=drive_link)
 🏆 **Averis × Monash Hackathon 2026**: Shipping Document Verification Use Case  
 👥 **Team**: [T4F, MEMBERS= YEOH ZHENG DA & NG WEI JER]
