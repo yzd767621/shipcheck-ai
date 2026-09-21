@@ -109,8 +109,6 @@ data/            the participant dataset bundle (inbox/, attachments/, loader.py
 
 ## Run it locally
 
-## Run it locally
-
 ```bash
 # Clone & enter directory
 git clone [https://github.com/yzd767621/shipcheck-ai.git](https://github.com/yzd767621/shipcheck-ai.git)
@@ -179,7 +177,7 @@ Why these flags:
 **On Windows (Command Prompt)** `printf` does not exist and `\` does not continue a line — put each command on one line:
 
 ```bat
-cd C:\path	o\shipcheck-ai
+cd C:\path\to\shipcheck-ai
 gcloud config set project <your-project-id>
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
 echo YOUR_GEMINI_KEY> key.txt
