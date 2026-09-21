@@ -1,5 +1,10 @@
 # ShipCheck AI
-test 123
+
+
+🌐 **Live Demo**: [https://shipcheck-ai.onrender.com](https://shipcheck-ai.onrender.com)  
+🎥 **5-Minute Video Pitch**: [Watch Demo Video](https://drive.google.com/file/d/19nWLSXbLaniAlkYJrzfJQwVASSQOsi9C/view?usp=drive_link)
+🏆 **Averis × Monash Hackathon 2026**: Shipping Document Verification Use Case  
+👥 **Team**: [T4F, MEMBERS= YEOH ZHENG DA & NG WEI JER]
 
 **From a shared shipping inbox to a discrepancy report, with a person in the loop.**
 
@@ -104,28 +109,35 @@ data/            the participant dataset bundle (inbox/, attachments/, loader.py
 
 ## Run it locally
 
+## Run it locally
+
 ```bash
-python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
+# Clone & enter directory
+git clone [https://github.com/yzd767621/shipcheck-ai.git](https://github.com/yzd767621/shipcheck-ai.git)
+cd shipcheck-ai
+
+# Environment setup
+python -m venv .venv
+# Activate: source .venv/bin/activate (Linux/Mac) or .venv\Scripts\activate (Windows)
+
 pip install -r requirements.txt
-export GEMINI_API_KEY=...                         # optional, FREE key from aistudio.google.com/apikey (Windows: set GEMINI_API_KEY=...)
-# Optional OCR for scans: install Tesseract (Windows: winget install UB-Mannheim.TesseractOCR). The Docker image includes it.
-uvicorn app:app --port 8000
-# open http://localhost:8000. The inbox is processed automatically on first start.
-```
 
-Batch mode and self-evaluation:
+# Optional: set Gemini key (falls back to rules-only without key)
+# Linux/Mac: export GEMINI_API_KEY=your_key
+# Windows: set GEMINI_API_KEY=your_key
 
-```bash
-python scripts/run_batch.py                 # writes out/results.json and out/submission.json
-python scripts/run_batch.py --no-llm        # rules only
-python scripts/run_batch.py --source http://localhost:8080 --submit   # against the organisers' inbox server
-pip install -r requirements-dev.txt && python -m pytest -q   # 58 tests
+# Run web console
+python -m uvicorn app:app --port 8000
+# Open http://localhost:8000
+
+# Run all 58 tests
+python -m pytest -q
 ```
 
 | Env var | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | none | enables Google Gemini (free tier) |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model (falls back to the newest available Flash model) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model (falls back to newest available Flash model) |
 | `ANTHROPIC_API_KEY` | none | alternative: Claude (paid) |
 | `SHIPCHECK_MODEL` | `claude-opus-5` | Claude model |
 | `SHIPCHECK_LLM` | `auto` | `gemini`, `claude` or `none` |
