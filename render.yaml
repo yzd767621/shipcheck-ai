@@ -8,3 +8,10 @@ services:
     envVars:
       - key: GEMINI_API_KEY      # free key from https://aistudio.google.com/apikey
         sync: false              # set in the Render dashboard
+      # Live mailbox (optional): a dedicated Gmail / Outlook mailbox + app password
+      - key: SHIPCHECK_IMAP_USER
+        sync: false
+      - key: SHIPCHECK_IMAP_PASSWORD
+        sync: false
+      - key: SHIPCHECK_SMTP_SEND # "1" lets a reviewer send the drafted reply
+        value: "0"

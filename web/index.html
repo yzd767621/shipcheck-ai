@@ -388,6 +388,7 @@ details.raw pre{white-space:pre-wrap;font:12px/1.55 var(--mono);color:var(--text
     <button class="nav" data-view="insights"><svg class="i"><use href="#i-chart"/></svg>Insights</button>
     <button class="nav" data-view="activity"><svg class="i"><use href="#i-clock"/></svg>Activity</button>
     <div class="side-foot">
+      <div class="engine" id="mailbox" style="margin-bottom:8px" hidden></div>
       <div class="engine" id="engine"><b><span class="dot"></span>…</b></div>
       <div class="theme-toggle" id="theme">
         <button data-t="light" title="Light"><svg class="i"><use href="#i-sun"/></svg></button>
@@ -479,7 +480,7 @@ const LABEL={shipper:"Shipper",consignee:"Consignee",notify_party:"Notify party"
 const CATS=["BL_COMPARISON","SI_REQUEST","INVOICE_QUERY","GENERAL","SPAM"];
 const NAMES={BL_COMPARISON:"BL check",SI_REQUEST:"SI request",INVOICE_QUERY:"Invoice query",GENERAL:"General",SPAM:"Spam",NEEDS_REVIEW:"Needs review",AWAITING_DOCUMENTS:"Awaiting docs",MISMATCH:"Mismatch",OK:"Verified",ERROR:"Error",SI:"Shipping Instruction",BL:"Draft BL",COMMERCIAL_INVOICE:"Commercial invoice",PACKING_LIST:"Packing list",CERTIFICATE_OF_ORIGIN:"Certificate of origin"};
 const REASON={wrong_doc_type:"Wrong document type",missing_attachment:"Missing attachment",unreadable:"Unreadable document",missing_value:"Missing value",low_confidence:"Low confidence"};
-const TABS=[["all","All"],["review","Needs review"],["MISMATCH","Discrepancies"],["BL_COMPARISON","BL checks"],["other","Other mail"]];
+const TABS=[["all","All"],["review","Needs review"],["MISMATCH","Discrepancies"],["BL_COMPARISON","BL checks"],["other","Other mail"],["mail","Live mail"]];
 const nm=s=>NAMES[s]||String(s||"").replace(/_/g," ").toLowerCase().replace(/^./,c=>c.toUpperCase());
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -520,9 +521,10 @@ function updateHash(){const h=S.view+(S.sel&&(S.view==="inbox"||S.view==="review
 /* ================================================================ list */
 CATS.forEach(c=>$("#fcat").insertAdjacentHTML("beforeend",`<option value="${c}">${nm(c)}</option>`));
 const statusOf=r=>(r.category==="BL_COMPARISON"||r.status==="ERROR")?r.status:null;
-function inTab(r,t){return t==="all"||(t==="review"&&r.needs_human)||(t==="reviewed"&&r.reviewed&&!r.needs_human)||(t==="MISMATCH"&&r.status==="MISMATCH")||(t==="BL_COMPARISON"&&r.category==="BL_COMPARISON")||(t==="other"&&r.category!=="BL_COMPARISON")}
+function inTab(r,t){return t==="all"||(t==="review"&&r.needs_human)||(t==="reviewed"&&r.reviewed&&!r.needs_human)||(t==="MISMATCH"&&r.status==="MISMATCH")||(t==="BL_COMPARISON"&&r.category==="BL_COMPARISON")||(t==="other"&&r.category!=="BL_COMPARISON")||(t==="mail"&&r.origin==="mail")}
 function visible(){const q=$("#q").value.toLowerCase().trim(),fc=$("#fcat").value;
-  return S.rows.filter(r=>inTab(r,S.tab)&&(!fc||r.category===fc)&&(!q||(r.subject+" "+r.from+" "+r.email_id+" "+(r.defect_fields||[]).join(" ")).toLowerCase().includes(q)))}
+  const v=S.rows.filter(r=>inTab(r,S.tab)&&(!fc||r.category===fc)&&(!q||(r.subject+" "+r.from+" "+r.email_id+" "+(r.defect_fields||[]).join(" ")).toLowerCase().includes(q)));
+  return S.tab==="mail"?v.sort((a,b)=>(b.received_at||"").localeCompare(a.received_at||"")):v}
 function renderTabs(){
   const tabs=S.view==="review"?[["review","Open"],["reviewed","Reviewed"]]:TABS;
   $("#tabs").innerHTML=tabs.map(([k,l])=>`<button class="tab ${S.tab===k?"on":""}" data-t="${k}">${l}<span class="n">${S.rows.filter(r=>inTab(r,k)).length}</span></button>`).join("");
@@ -536,7 +538,7 @@ function renderList(){
     <div class="l3">${badgeFor(r)}${statusOf(r)?`<span class="badge b-cat">${nm(r.category)}</span>`:""}
       ${r.review_reason?`<span class="muted" style="font-size:12px">${REASON[r.review_reason]}</span>`:""}
       ${(r.defect_fields||[]).length?`<span class="muted" style="font-size:12px">${r.defect_fields.map(f=>LABEL[f]).join(", ")}</span>`:""}
-      ${r.reviewed?`<span class="badge plain b-cat">${ico("user")}Reviewed</span>`:""}${r.uploaded?`<span class="badge plain b-cat">Uploaded</span>`:""}</div>
+      ${r.reviewed?`<span class="badge plain b-cat">${ico("user")}Reviewed</span>`:""}${r.uploaded?`<span class="badge plain b-cat">Uploaded</span>`:""}${r.origin==="mail"?`<span class="badge plain b-cat">${ico("mail")}Live mail</span>`:""}${r.replied?`<span class="badge plain b-cat">${ico("check")}Replied</span>`:""}</div>
     ${S.tab==="reviewed"&&r.reviewed_by?`<div class="rv-line">${ico("check")}<span><b>${esc(r.reviewed_by)}</b> · ${esc(ago(r.reviewed_at))}${r.reviewed_from?` · was ${esc(REASON[r.reviewed_from]||r.reviewed_from)}`:""}${r.review_note?` · “${esc(r.review_note)}”`:""}</span></div>`:""}</div>`).join("")
     ||(S.tab==="reviewed"?`<div class="empty"><div class="ico">${ico("user")}</div><b>No reviewed cases yet</b><span>Cases you confirm in the Open tab are kept here with who reviewed them and when.</span></div>`
       :`<div class="empty"><div class="ico">${ico(S.tab==="review"?"check":"inbox")}</div><b>${S.tab==="review"?"Queue is clear":"No emails match"}</b><span>${S.tab==="review"?"Nothing needs a person right now.":"Try a different filter."}</span></div>`);
@@ -645,8 +647,9 @@ function reviewCard(r){
 
 function replyCard(r){
   if(r.category!=="BL_COMPARISON"||!["MISMATCH","NEEDS_REVIEW","OK"].includes(r.status))return "";
+  const sent=(r.replies||[]).map(x=>`<div class="note">${ico("check")} Sent to ${esc(x.to)} by ${esc(x.by||"reviewer")} · ${esc(ago(x.at))} · “${esc(x.subject)}”</div>`).join("");
   return `<div class="card"><div class="card-h"><h3>Reply to sender</h3><span class="sub">${S.llm?"Drafted by "+esc(S.provider)+" from the verified findings":"Template draft (add a free Gemini key for AI drafting)"}</span>
-    <div class="r"><button class="btn sm" id="rv-reply">${ico("sparkle")}Draft reply</button></div></div><div class="card-b" id="reply-b"><span class="muted" style="font-size:13px">Generate an amendment request or confirmation email for ${esc(r.from)}.</span></div></div>`;
+    <div class="r"><button class="btn sm" id="rv-reply">${ico("sparkle")}Draft reply</button></div></div>${sent?`<div class="card-b" style="border-bottom:1px solid var(--border)">${sent}</div>`:""}<div class="card-b" id="reply-b"><span class="muted" style="font-size:13px">Generate an amendment request or confirmation email for ${esc(r.from)}.${r.origin==="mail"?(S.mail&&S.mail.send_enabled?" You can edit it and send it from here, in the same email thread.":" Sending from here is off on this server (SHIPCHECK_SMTP_SEND); copy it into your mail client instead."):""}</span></div></div>`;
 }
 
 function classCard(r){
@@ -670,7 +673,8 @@ async function show(id){
   $("#detail").innerHTML=`
     <button class="btn sm ghost back" id="d-back" style="margin:-6px 0 10px -8px">${ico("chevron","i")} Back to ${S.view==="review"?"review queue":"inbox"}</button>
     <div class="d-head"><div style="min-width:0;flex:1"><h2>${esc(r.subject||"(no subject)")}</h2>
-      <div class="d-meta"><span>${ico("mail")}${esc(r.from)}</span><span>${esc(r.email_id)}</span><span>${ico("clock")}${esc((r.processed_at||"").replace("T"," ").replace("+00:00"," UTC"))}</span></div></div>
+      <div class="d-meta"><span>${ico("mail")}${esc(r.from)}</span><span>${esc(r.email_id)}</span><span>${ico("clock")}${esc((r.processed_at||"").replace("T"," ").replace("+00:00"," UTC"))}</span>${r.origin==="mail"?`<span title="Read from ${esc((r.mail||{}).account||"")} / ${esc((r.mail||{}).folder||"")}">${ico("mail")}Live mail · received ${esc(ago((r.mail||{}).date))}</span>`:""}</div>
+      ${((r.mail||{}).ignored_attachments||[]).length?`<div class="muted" style="font-size:12.5px;margin-top:6px">Ignored attachments: ${r.mail.ignored_attachments.map(a=>esc(a.name)+" ("+esc(a.reason)+")").join(", ")}</div>`:""}</div>
       <div class="d-actions">${bl?`<a class="btn sm" href="/report/${encodeURIComponent(r.email_id)}" target="_blank">${ico("printer")}Report</a>`:""}<button class="btn sm" id="rv-retry">${ico("refresh")}Retry</button></div></div>
     ${verdict(r)}${bl?stepper(r):""}${comparisonCard(r)}${(r.needs_human||bl)?reviewCard(r):""}${docsCard(r)}${replyCard(r)}${classCard(r)}${!bl&&!r.needs_human?reviewCard(r):""}
     <div class="card"><div class="card-h"><h3>Original email</h3></div><div class="card-b"><details class="raw" ${bl?"":"open"}><summary>Show message body</summary><pre>${esc(r.body)}</pre></details></div></div>
@@ -702,8 +706,15 @@ function wireDetail(r){
   $("#rv-retry").onclick=async()=>{const b=$("#rv-retry");b.disabled=true;try{await api(`/api/emails/${r.email_id}/retry`,{method:"POST"});toast("Re-processed "+r.email_id,"refresh")}catch(e){toast("Retry failed: "+e.message,"alert")}await load();show(r.email_id)};
   const rp=$("#rv-reply");if(rp)rp.onclick=async()=>{rp.disabled=true;rp.innerHTML=ico("sparkle")+"Drafting…";
     try{const d=await api(`/api/emails/${r.email_id}/draft-reply`,{method:"POST"});
-      $("#reply-b").innerHTML=`${d.warning?`<div class="callout">${ico("alert")}${esc(d.warning)}</div>`:""}<pre class="reply" id="reply-t">${esc(d.text)}</pre><div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm" id="rv-copy">Copy</button><span class="muted" style="font-size:12.5px;align-self:center">Drafted by ${d.engine==="claude"?"Claude":"template"}</span></div>`;
-      $("#rv-copy").onclick=()=>{navigator.clipboard.writeText(d.text).then(()=>toast("Reply copied"))};
+      const canSend=r.origin==="mail"&&S.mail&&S.mail.send_enabled;
+      $("#reply-b").innerHTML=`${d.warning?`<div class="callout">${ico("alert")}${esc(d.warning)}</div>`:""}<textarea class="reply input" id="reply-t" spellcheck="true" style="width:100%;min-height:220px;resize:vertical;font:12.5px/1.5 ui-monospace,Consolas,monospace">${esc(d.text)}</textarea><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${canSend?`<button class="btn sm primary" id="rv-send">${ico("mail")}Send to ${esc(r.from)}</button>`:""}<button class="btn sm" id="rv-copy">Copy</button><span class="muted" style="font-size:12.5px;align-self:center">Drafted by ${esc(d.engine==="template"?"template":d.engine)} · edit before sending</span></div>`;
+      $("#rv-copy").onclick=()=>{navigator.clipboard.writeText($("#reply-t").value).then(()=>toast("Reply copied"))};
+      const sd=$("#rv-send");if(sd)sd.onclick=async()=>{
+        if(!confirm(`Send this reply to ${r.from}?`))return;
+        sd.disabled=true;sd.innerHTML=ico("mail")+"Sending…";
+        try{await api(`/api/emails/${r.email_id}/send-reply`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:$("#reply-t").value,reviewer:($("#rv-who")||{}).value||"reviewer"})});
+          toast("Reply sent to "+r.from,"mail");await load();show(r.email_id)}
+        catch(e){toast("Send failed: "+e.message,"alert");sd.disabled=false;sd.innerHTML=ico("mail")+"Send to "+esc(r.from)}};
     }catch(e){toast("Draft failed: "+e.message,"alert")}rp.disabled=false;rp.innerHTML=ico("sparkle")+"Redraft"};
 }
 
@@ -789,6 +800,7 @@ const COMMANDS=[
   {t:"Toggle dark mode",x:"",run:()=>setTheme(document.documentElement.getAttribute("data-theme")==="dark"?"light":"dark")},
   {t:"Keyboard shortcuts",x:"?",run:()=>$("#keys").hidden=false},
   {t:"Test AI connection",x:"",run:()=>testAI()},
+  {t:"Check mailbox now",x:"",run:()=>checkMail()},{t:"Show live mail",x:"",run:()=>go("inbox",{tab:"mail"})},
   {t:"Show reviewed cases",x:"",run:()=>go("review",{tab:"reviewed"})}];
 async function testAI(){const b=$("#ai-test"),out=$("#ai-res");if(b){b.disabled=true;b.innerHTML=ico("sparkle")+"Testing…"}
   let d;try{d=await api("/api/ai-check",{method:"POST"})}catch(e){d={ok:false,message:e.message}}
@@ -835,6 +847,31 @@ document.addEventListener("click",()=>$("#more").hidden=true);
 async function runAll(){try{await api("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});toast("Re-processing inbox…","refresh");poll.fast=true}catch(e){toast(e.message,"alert")}}
 $("#btn-run").onclick=runAll;
 
+/* ================================================================ live mailbox */
+function renderMailbox(m){
+  const box=$("#mailbox");if(!m)return;S.mail=m;
+  const prev=renderMailbox.received;renderMailbox.received=m.received;
+  if(prev!=null&&m.received>prev){
+    (m.last_new||[]).slice(0,3).forEach(n=>toast(`New email from ${n.from}: ${nm(n.category==="BL_COMPARISON"?n.status:n.category)}`,"mail"));
+    load().then(()=>{if(S.view==="insights")renderInsights()})}
+  const sig=JSON.stringify([m.configured,m.connected,m.checking,m.last_error,m.last_check,m.received,m.skipped,m.send_enabled]);
+  if(sig===renderMailbox.sig)return;renderMailbox.sig=sig;box.hidden=false;
+  if(!m.configured){box.innerHTML=`<b><span class="dot"></span>Live mailbox off</b><span class="why">Set SHIPCHECK_IMAP_USER and SHIPCHECK_IMAP_PASSWORD to read a real inbox.</span>`;return}
+  const state=m.checking?"Checking…":m.last_error?"Cannot connect":m.connected?"Live mailbox":"Connecting…";
+  box.innerHTML=`<b><span class="dot${m.connected&&!m.last_error?" on":""}"></span>${state}</b>
+    <span title="${esc(m.host)} · ${esc(m.folder)}">${esc(m.account)}${m.folder&&m.folder!=="INBOX"?" · "+esc(m.folder):""}</span>
+    <span class="why">${m.last_check?"Checked "+esc(ago(m.last_check))+" · every "+Math.round(m.poll_seconds/60*10)/10+" min":"Not checked yet"} · ${fmt(m.received)} received${m.skipped?` · ${fmt(m.skipped)} not on allow-list`:""}${m.send_enabled?" · replies on":""}</span>
+    ${m.last_error?`<span class="why" style="color:var(--bad)">${esc(m.last_error)}</span>`:""}
+    <button class="btn sm" id="mb-check" style="margin-top:8px;width:100%;justify-content:center" ${m.checking?"disabled":""}>${ico("refresh")}Check mail now</button>`;
+  $("#mb-check").onclick=checkMail}
+async function checkMail(){const b=$("#mb-check");if(b){b.disabled=true;b.innerHTML=ico("refresh")+"Checking…"}
+  try{const d=await api("/api/mailbox/check",{method:"POST"});
+    if(d.last_error)toast("Mailbox: "+d.last_error.slice(0,140),"alert");
+    else if(!d.new.length)toast("No new email","mail");
+    else{toast(`${d.new.length} new email${d.new.length>1?"s":""} processed`,"mail");await load();go("inbox",{tab:"mail"});show(d.new[0].email_id)}
+    renderMailbox.received=d.received;renderMailbox.sig=null;renderMailbox(d)}
+  catch(e){toast(e.message,"alert");renderMailbox.sig=null;if(S.mail)renderMailbox(S.mail)}}
+
 async function poll(){
   try{const s=await api("/api/status");S.llm=s.llm;S.provider=s.provider;
     const ocrTxt=s.ocr?"OCR on":"OCR off";
@@ -844,6 +881,7 @@ async function poll(){
         :`<b><span class="dot${s.ocr?" on":""}"></span>Rules${s.ocr?" + OCR":""} · AI off</b><span class="why">${esc(s.llm_reason||"Add GEMINI_API_KEY (free) to enable the AI model")}</span>`)
         +`<button class="btn sm" id="ai-test" style="margin-top:8px;width:100%;justify-content:center">${ico("sparkle")}Test AI connection</button><div id="ai-res" class="why" hidden></div>`;
       $("#ai-test").onclick=testAI}
+    renderMailbox(s.mailbox);
     $("#job").hidden=!s.running;
     if(s.running){$("#jobbar").style.width=(100*s.done/Math.max(1,s.total))+"%";$("#jobtxt").textContent=`Processing ${s.done}/${s.total}`}
     if(s.running||poll.fast){await load();if(!s.running&&poll.fast){if(S.view==="insights")renderInsights();if(S.sel)show(S.sel)}}

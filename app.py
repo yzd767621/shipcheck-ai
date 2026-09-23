@@ -8,6 +8,8 @@ Environment:
     GEMINI_API_KEY     enables Google Gemini (free tier) — or ANTHROPIC_API_KEY for Claude
                        (classification fallback, field finding,
                        scanned-document pre-read, reply drafting)
+    SHIPCHECK_IMAP_USER / SHIPCHECK_IMAP_PASSWORD
+                       read a real mailbox as well (see shipcheck/mailbox.py)
 """
 from __future__ import annotations
 
@@ -29,21 +31,33 @@ sys.path.insert(0, str(ROOT / "data"))
 
 from loader import Inbox  # noqa: E402
 from shipcheck import llm, ocr  # noqa: E402
+from shipcheck.mailbox import MailboxPoller, MailConfig  # noqa: E402
 from shipcheck.pipeline import Pipeline, apply_human_review, now, to_submission  # noqa: E402
 from shipcheck.store import Store  # noqa: E402
 
 SOURCE = os.environ.get("SHIPCHECK_SOURCE", str(ROOT / "data"))
 UPLOAD_DIR = Path(os.environ.get("SHIPCHECK_UPLOADS", str(ROOT / "out" / "uploads")))
+MAIL_DIR = Path(os.environ.get("SHIPCHECK_MAIL_DIR", str(UPLOAD_DIR.parent / "mail")))
 store = Store(os.environ.get("SHIPCHECK_DB", str(ROOT / "out" / "shipcheck.db")))
 
 
 class UploadAwareInbox(Inbox):
-    """The dataset inbox plus emails uploaded through the UI."""
+    """The dataset inbox plus emails uploaded through the UI or read from the live mailbox."""
 
     def read_bytes(self, att_path):
-        if att_path.startswith("uploads/"):
-            return (UPLOAD_DIR / att_path.split("/", 1)[1]).read_bytes()
+        folder, _, name = att_path.partition("/")
+        if folder in ("uploads", "mail"):
+            base = UPLOAD_DIR if folder == "uploads" else MAIL_DIR
+            path = (base / name).resolve()
+            if base.resolve() not in path.parents:
+                raise FileNotFoundError(att_path)
+            return path.read_bytes()
         return super().read_bytes(att_path)
+
+
+def is_dataset(r: dict) -> bool:
+    """Organiser dataset emails only: uploads and live mail are never scored."""
+    return not r.get("uploaded") and r.get("origin") != "mail"
 
 
 inbox = UploadAwareInbox(SOURCE)
@@ -52,10 +66,27 @@ pipeline = Pipeline(inbox)
 # AI model's free quota is kept for live actions: uploads, retries, replies.
 AI_IN_BATCH = os.environ.get("SHIPCHECK_AI_BATCH", "0") == "1"
 batch_pipeline = pipeline if AI_IN_BATCH else Pipeline(inbox, use_llm=False)
+
+
+def _on_mail(e: dict, meta: dict) -> dict:
+    """A new message from the live mailbox: same pipeline as an upload (AI on)."""
+    res = pipeline.process(e)
+    res.update(origin="mail", mail=meta)
+    store.put(res)
+    store.log(now(), e["email_id"], "mail_received",
+              {"from": e["from"], "attachments": len(e["attachments"]), "status": res["status"]})
+    return res
+
+
+mailbox = MailboxPoller(MailConfig.from_env(), MAIL_DIR, _on_mail, known=lambda eid: store.get(eid) is not None)
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(_app):
     _startup()
+    mailbox.start()
     yield
+    mailbox.stop()
 
 
 app = FastAPI(title="ShipCheck AI", version="1.1.0", lifespan=_lifespan)
@@ -111,12 +142,26 @@ def _startup():
 @app.get("/api/health")
 def health():
     return {"ok": True, "emails": store.count(), **_engine(),
-            "source": SOURCE}
+            "source": SOURCE, "mailbox": mailbox.state["configured"] and mailbox.state["connected"]}
 
 
 @app.get("/api/status")
 def status():
-    return {**_job, **_engine()}
+    return {**_job, **_engine(), "mailbox": mailbox.state}
+
+
+@app.get("/api/mailbox")
+def mailbox_state():
+    return mailbox.state
+
+
+@app.post("/api/mailbox/check")
+def mailbox_check():
+    """Check the live mailbox now instead of waiting for the next timer tick."""
+    if not mailbox.cfg.configured:
+        raise HTTPException(400, "Live mailbox is off. Set SHIPCHECK_IMAP_USER and SHIPCHECK_IMAP_PASSWORD on the server.")
+    new = mailbox.poll_once()
+    return {"new": [_slim(r) for r in new], **mailbox.state}
 
 
 def _engine() -> dict:
@@ -164,8 +209,11 @@ def run(body: dict | None = None):
 def _slim(r: dict) -> dict:
     keys = ("email_id", "from", "subject", "category", "category_confidence", "category_engine", "status",
             "review_reason", "defect_fields", "summary", "needs_human", "reviewed", "uploaded", "attachments",
-            "resolution")
+            "resolution", "origin")
     out = {k: r.get(k) for k in keys}
+    if r.get("origin") == "mail":
+        out["received_at"] = (r.get("mail") or {}).get("date")
+        out["replied"] = bool(r.get("replies"))
     human = [h for h in r.get("history") or [] if h.get("by") != "system"]
     if human:
         last = human[-1]
@@ -195,7 +243,9 @@ def retry(email_id: str):
         raise HTTPException(404)
     e = {k: prev.get(k) for k in ("email_id", "from", "subject", "body", "attachments")}
     res = pipeline.process(e)
-    res["uploaded"] = prev.get("uploaded")
+    for k in ("uploaded", "origin", "mail", "replies"):
+        if prev.get(k) is not None:
+            res[k] = prev[k]
     res["history"] = (prev.get("history") or []) + [{"at": now(), "by": "system", "decision": {"action": "retry"}}]
     store.put(res)
     store.log(now(), email_id, "retry", {"status": res["status"]})
@@ -237,8 +287,39 @@ def draft_reply(email_id: str):
     return {"engine": "template", "text": _template_reply(r)}
 
 
+class SendReply(BaseModel):
+    text: str
+    reviewer: str = "reviewer"
+
+
+@app.post("/api/emails/{email_id}/send-reply")
+def send_reply(email_id: str, body: SendReply):
+    """Send the (reviewed, possibly edited) reply to the original sender. A person
+    always presses Send; nothing is emailed automatically."""
+    r = store.get(email_id)
+    if not r:
+        raise HTTPException(404)
+    if r.get("origin") != "mail":
+        raise HTTPException(400, "Only emails that arrived through the live mailbox can be answered from here.")
+    if not body.text.strip():
+        raise HTTPException(400, "The reply is empty.")
+    try:
+        sent = mailbox.send_reply(r, body.text)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, f"Sending failed: {type(exc).__name__}: {str(exc)[:200]}")
+    sent["by"] = body.reviewer
+    r["replies"] = (r.get("replies") or []) + [sent]
+    store.put(r)
+    store.log(now(), email_id, "reply_sent", {"to": sent["to"], "subject": sent["subject"], "by": body.reviewer})
+    return r
+
+
 def _template_reply(r: dict) -> str:
-    name = (r.get("from") or "").split("@")[0]
+    name = (r.get("mail") or {}).get("from_name") or (r.get("from") or "").split("@")[0]
     lines = [f"Subject: RE: {r.get('subject', '')}", "", f"Hi {name},", ""]
     if r.get("status") == "MISMATCH":
         lines.append("We have checked the draft BL against the SI. Please amend the following to match the SI:")
@@ -458,7 +539,7 @@ td:nth-child(2),td:nth-child(3){{font-family:ui-monospace,Consolas,monospace;fon
 
 @app.get("/api/submission")
 def submission():
-    rs = [r for r in store.all() if not r.get("uploaded")]
+    rs = [r for r in store.all() if is_dataset(r)]
     return JSONResponse(to_submission(rs), headers={"Content-Disposition": 'attachment; filename="submission.json"'})
 
 
@@ -468,7 +549,7 @@ def submit_for_score():
     (only when SHIPCHECK_SOURCE is the HTTP inbox server)."""
     if not inbox.is_http:
         raise HTTPException(400, "Self-evaluation needs SHIPCHECK_SOURCE=http://<inbox-server>:8080")
-    rs = [r for r in store.all() if not r.get("uploaded")]
+    rs = [r for r in store.all() if is_dataset(r)]
     return inbox.submit(to_submission(rs))
 
 
