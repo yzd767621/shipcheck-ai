@@ -1,7 +1,7 @@
 # ShipCheck AI
 
 
-🌐 **Live Demo**: [https://shipcheck-ai.onrender.com](https://shipcheck-ai.onrender.com)  (it may takes few minutes to be fully ready, please wait patiently)
+🌐 **Live Demo**: [https://shipcheck-ai.onrender.com](https://shipcheck-ai.onrender.com)  (the free server sleeps when idle; the first visit may take a few minutes to wake it)
 
 🎥 **5-Minute Video Pitch**: [Watch Demo Video](https://drive.google.com/file/d/19nWLSXbLaniAlkYJrzfJQwVASSQOsi9C/view?usp=drive_link)
 🏆 **Averis × Monash Hackathon 2026**: Shipping Document Verification Use Case  
@@ -29,7 +29,7 @@ Scored with the organisers' self-evaluation (`POST /submit` / `score_cli.py`):
 | Reliability: escalation precision / recall | **1.000 / 1.000** (20/20, correct reason each time) |
 | **Final score** | **1.0000** |
 
-The engine never sees the answer key. The results above come from general rules plus the checks in `tests/`. Those 41 tests use synthetic messy inputs that are **not** in the dataset: EU number formats, MT units, `2 x 40'HC + 1 x 20'GP`, port aliases, swapped file names, Word tables, corrupt PDFs and placeholder values.
+The engine never sees the answer key. The results above come from general rules plus the checks in `tests/`. These tests use synthetic messy inputs that are **not** in the dataset: EU number formats, MT units, `2 x 40'HC + 1 x 20'GP`, port aliases, swapped file names, Word tables, corrupt PDFs and placeholder values.
 
 ---
 
@@ -41,7 +41,8 @@ The engine never sees the answer key. The results above come from general rules 
 | **Extract** | Parsers for TXT, PDF (character-level, splitting bold labels from values so overflowing labels don't mix with values), DOCX (tables in body order) and XLSX. A label lexicon of about 60 variants, including bilingual `PORT OF LOADING (装货港)`, aligns fields by meaning. Net weight and per-container rows are never taken as the gross total. When a label is not recognised, the **AI model** finds the field in the document text and records the evidence line. |
 | **Compare** | Normalisation removes formatting noise before comparing: legal suffixes (`LIMITED`→`LTD`), punctuation, UN/LOCODEs, port and country aliases (`Ho Chi Minh City, Viet Nam` = `HOCHIMINH CITY, VIETNAM`), thousands separators, `MT`/`LBS` to kg, and container expressions. Real differences are flagged with SI and BL side by side, the size of the difference, and a lower-confidence note when two names differ only slightly (a possible typo). |
 | **Ask for help** | `NEEDS_REVIEW` with a reason and evidence: `unreadable` (corrupt or image-only file; free local **OCR (Tesseract)**, plus **Gemini vision** when a key is set, pre-reads the scan so the reviewer only has to confirm), `wrong_doc_type` (e.g. a Commercial Invoice in the BL slot, detected from the document header rather than the file name), `missing_attachment`, and `missing_value` (N/A, TBA, `____ MT`). The reviewer's correction recalculates the report, and the full history is stored. Processing failures show up as `ERROR` with a **Retry** button. |
-| **Act** | "Draft reply to sender" writes the amendment request email (Gemini, with a template fallback). |
+| **Act** | "Draft reply to sender" writes the amendment request email (Gemini, with a template fallback). For live mail, a reviewer can edit it and **send it in the same email thread**. |
+| **Live mailbox** | Besides the organiser dataset, ShipCheck reads a **real mailbox** (Gmail, Outlook / Microsoft 365 or any IMAP server) every minute. New emails and their attachments go through the same pipeline and appear in the console within seconds. The mailbox is read-only (nothing is deleted, moved or marked as read), signature logos and calendar files are ignored, and an optional sender allow-list keeps unrelated mail out. |
 
 ### The operations console
 
@@ -57,6 +58,7 @@ The engine never sees the answer key. The results above come from general rules 
 | **Activity log** | An audit trail of batch runs, uploads, retries and every human decision, including notes. |
 | **Command palette** | `Ctrl+K` searches emails, senders and fields, and runs commands. `J`/`K` move through the list; `?` lists all shortcuts. |
 | **AI status + test** | The sidebar shows whether the AI model is connected and, if not, exactly why (e.g. no `GEMINI_API_KEY` on the server, or a mistyped variable name). **Test AI connection** makes one real call and reports the result. |
+| **Live mail status** | The sidebar shows the connected mailbox, when it was last checked and how many emails arrived. **Check mail now** skips the wait, a toast announces each new email, and the **Live mail** tab lists them newest first. |
 | **Light / dark / system theme** | Responsive layout for laptop and tablet. |
 
 "Please send the draft BL for checking" emails are part of the BL-check workflow, but no documents have arrived yet. They are tracked as **Awaiting documents** and are *not* escalated. This keeps the review queue down to cases that really need a person.
@@ -68,6 +70,7 @@ The engine never sees the answer key. The results above come from general rules 
 ```mermaid
 flowchart LR
     A[Inbox<br/>JSON + attachments<br/>local folder or HTTP server] --> B[Classifier<br/>rules + confidence]
+    M[Live mailbox<br/>IMAP: Gmail / Outlook<br/>polled every minute] --> B
     B -- confidence < 0.75 --> C[Gemini free tier or Claude<br/>structured JSON]
     C --> D{Category}
     B --> D
@@ -81,6 +84,7 @@ flowchart LR
     K -- match / mismatch --> R
     H -- confirm / correct --> K
     R --> UI[Web console + REST API<br/>report · review · retry · reply · export]
+    UI -- reviewer presses Send --> S[SMTP reply<br/>same email thread]
 ```
 
 **Why hybrid rules + AI?** Rules are fast, free, deterministic and auditable, and they handle the formats they know perfectly. The AI covers the long tail: new wording, unknown labels, scanned pages and reply writing. It always returns **schema-validated JSON**, and it never overrides a value the rules found blank. The app still runs fully without an API key (rules-only mode), so a demo never depends on the network.
@@ -99,10 +103,12 @@ shipcheck/
   ocr.py         free local OCR (Tesseract) for scanned pages
   pipeline.py    orchestration, escalation rules, human-review recalculation, submission export
   store.py       SQLite result store + audit log
+  mailbox.py     live mailbox: IMAP polling, MIME → email + attachments, SMTP replies in-thread
 app.py           FastAPI app (REST API + web console)
 web/index.html   single-page operations console (no build step): inbox, review queue, insights, activity
-scripts/run_batch.py   CLI: process the inbox, write results + submission.json, optionally submit for scoring
-tests/           58 tests: messy-input robustness, API, OCR and Gemini (fake transport)
+scripts/run_batch.py        CLI: process the inbox, write results + submission.json, optionally submit for scoring
+scripts/send_demo_email.py  email a dataset SI / draft BL pair to the live mailbox (for demos)
+tests/           76 tests: messy-input robustness, API, OCR, Gemini and the mailbox (fake transports)
 data/            the participant dataset bundle (inbox/, attachments/, loader.py)
 ```
 
@@ -112,7 +118,7 @@ data/            the participant dataset bundle (inbox/, attachments/, loader.py
 
 ```bash
 # Clone & enter directory
-git clone [https://github.com/yzd767621/shipcheck-ai.git](https://github.com/yzd767621/shipcheck-ai.git)
+git clone https://github.com/yzd767621/shipcheck-ai.git
 cd shipcheck-ai
 
 # Environment setup
@@ -129,8 +135,17 @@ pip install -r requirements.txt
 python -m uvicorn app:app --port 8000
 # Open http://localhost:8000
 
-# Run all 58 tests
+# Run all 76 tests
+pip install -r requirements-dev.txt
 python -m pytest -q
+```
+
+Batch mode and self-evaluation:
+
+```bash
+python scripts/run_batch.py                 # writes out/results.json and out/submission.json
+python scripts/run_batch.py --no-llm        # rules only
+python scripts/run_batch.py --source http://localhost:8080 --submit   # against the organisers' inbox server
 ```
 
 | Env var | Default | Purpose |
@@ -144,10 +159,48 @@ python -m pytest -q
 | `SHIPCHECK_SOURCE` | `./data` | dataset folder or inbox server URL |
 | `SHIPCHECK_DB` | `./out/shipcheck.db` | result store |
 | `SHIPCHECK_DISABLE_LLM` | none | set to `1` to force rules-only |
+| `SHIPCHECK_IMAP_USER` | none | mailbox address; with the password below, turns on the live mailbox |
+| `SHIPCHECK_IMAP_PASSWORD` | none | app password (Gmail: 16 characters, spaces are ignored) |
+| `SHIPCHECK_IMAP_HOST` | `imap.gmail.com` | e.g. `outlook.office365.com` for Outlook / Microsoft 365 |
+| `SHIPCHECK_IMAP_FOLDER` | `INBOX` | folder or Gmail label to watch, e.g. `ShipCheck` |
+| `SHIPCHECK_MAIL_POLL` | `60` | seconds between checks |
+| `SHIPCHECK_MAIL_DAYS` / `SHIPCHECK_MAIL_MAX` | `7` / `25` | look back N days, newest N messages per check |
+| `SHIPCHECK_MAIL_ALLOW` | none | allow-list of senders or domains, e.g. `averis.com, ops@partner.com` |
+| `SHIPCHECK_SMTP_SEND` | `0` | `1` lets a reviewer send the drafted reply |
+| `SHIPCHECK_SMTP_HOST` | from IMAP host | e.g. `smtp.office365.com` (with `SHIPCHECK_SMTP_PORT`, default 465) |
 
 ### REST API
 
-`GET /api/emails` · `GET /api/emails/{id}` · `POST /api/emails/{id}/review` · `POST /api/emails/{id}/retry` · `POST /api/emails/{id}/draft-reply` · `POST /api/upload` (new email + attachments) · `POST /api/run` · `GET /api/stats` · `GET /api/insights` · `GET /api/audit` · `GET /api/export/discrepancies.csv` · `GET /report/{id}` · `GET /api/submission` · `POST /api/submit` · `GET /api/health`
+`GET /api/emails` · `GET /api/emails/{id}` · `POST /api/emails/{id}/review` · `POST /api/emails/{id}/retry` · `POST /api/emails/{id}/draft-reply` · `POST /api/emails/{id}/send-reply` · `POST /api/upload` (new email + attachments) · `POST /api/run` · `GET /api/mailbox` · `POST /api/mailbox/check` · `GET /api/stats` · `GET /api/insights` · `GET /api/audit` · `GET /api/export/discrepancies.csv` · `GET /report/{id}` · `GET /api/submission` · `POST /api/submit` · `GET /api/health`
+
+---
+
+## Connect a real mailbox
+
+ShipCheck can watch a real inbox as well as the organiser dataset. Live emails are shown in the **Live mail** tab and are never included in `submission.json`, so the dataset score is unaffected.
+
+1. **Create a dedicated mailbox** (e.g. `shipcheck.demo@gmail.com`). Do not connect a personal or company inbox: anyone with the console link can read what arrives.
+2. **Create an app password.** Gmail: turn on 2-Step Verification, then go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords). The normal password is refused over IMAP.
+3. **Set the variables**, locally or in the Render dashboard (Environment):
+   ```
+   SHIPCHECK_IMAP_USER=shipcheck.demo@gmail.com
+   SHIPCHECK_IMAP_PASSWORD=abcd efgh ijkl mnop
+   SHIPCHECK_SMTP_SEND=1                 # optional: allow sending replies
+   SHIPCHECK_MAIL_ALLOW=gmail.com        # optional: only process these senders
+   ```
+4. **Send it an email** with an SI and a draft BL attached, from any mail client or with the demo script:
+   ```bash
+   python scripts/send_demo_email.py --list              # dataset cases with attachments
+   python scripts/send_demo_email.py --email email_005   # sends it to the mailbox itself
+   ```
+   Within a minute (or straight away with **Check mail now**) the email appears in the console with its classification and SI vs BL result.
+
+How it behaves:
+- **Read-only.** The folder is opened read-only and messages are fetched with `BODY.PEEK`, so nothing is deleted, moved or marked as read.
+- **No duplicates.** Each email gets a stable id from its `Message-ID`, so a restart or a second check never processes it twice.
+- **Real-world noise.** HTML-only bodies are converted to text; signature logos, inline images, `smime.p7s`, `.ics` and `winmail.dat` are ignored (and listed as ignored); unsafe file names are cleaned.
+- **Human in control.** Replies are only sent when a reviewer presses **Send**. They go to the original sender, in the same thread (`In-Reply-To` / `References`), and each one is logged in the audit trail.
+- **Restart-safe on free hosting.** Render's free plan clears `/tmp` on restart. The mailbox is the source of truth, so the last `SHIPCHECK_MAIL_DAYS` of mail is simply read and checked again.
 
 Time-saved assumptions are configurable: `SHIPCHECK_TRIAGE_MIN` (1.5), `SHIPCHECK_CHECK_MIN` (10), `SHIPCHECK_REVIEW_MIN` (4).
 
@@ -208,7 +261,7 @@ Set a budget alert (Billing → Budgets & alerts) before deploying. For durable 
 
 ## Roadmap
 
-- Live mailbox connectors (Microsoft Graph / Gmail API) and a push-based queue (Pub/Sub).
+- ~~Live mailbox connector~~ (done: IMAP + SMTP). Next: OAuth through Microsoft Graph / Gmail API and push notifications (Pub/Sub) instead of polling.
 - Document AI / layout-aware OCR, with confidence voting between OCR and vision models.
 - Learn new label variants from reviewer corrections (feedback into the lexicon).
 - More fields (vessel/voyage, HS code, marks & numbers) and configurable per-customer tolerance rules.
