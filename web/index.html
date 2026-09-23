@@ -121,8 +121,7 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 
 /* ---------------------------------------------------------------- list */
 .listcol{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--surface)}
-.tabs{display:flex;gap:2px;padding:12px 12px 0;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none}
-.tabs::-webkit-scrollbar{display:none}
+.tabs{display:flex;flex-wrap:wrap;gap:0 2px;padding:12px 12px 0;border-bottom:1px solid var(--border)}
 .tab{border:0;background:none;padding:8px 8px 10px;cursor:pointer;color:var(--text-3);font-weight:500;font-size:13px;border-bottom:2px solid transparent;display:flex;gap:6px;align-items:center;white-space:nowrap}
 .tab:hover{color:var(--text)}
 .tab.on{color:var(--brand-text);border-color:var(--brand)}
